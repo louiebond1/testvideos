@@ -11,9 +11,10 @@
     <span class="text-slate-900 font-medium font-mono text-xs">{{ scenario.scenario_id }}</span>
   </nav>
   <div class="flex items-center gap-3">
-    <button class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition">
-      <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-      Run scenario
+    <button id="run-btn" onclick="startRun()"
+            class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
+      <svg id="run-icon" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      <span id="run-label">Run scenario</span>
     </button>
   </div>
 </header>
@@ -111,6 +112,32 @@
 
 <script>
   const SCENARIO_ID = "{{ scenario.scenario_id }}";
+
+  let _pollTimer = null;
+
+  async function startRun() {
+    const btn = document.getElementById('run-btn');
+    const label = document.getElementById('run-label');
+    const icon = document.getElementById('run-icon');
+    btn.disabled = true;
+    label.textContent = 'Running…';
+    icon.innerHTML = '<path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z" opacity=".3"/><path d="M12 2v4a8 8 0 0 1 8 8h4A12 12 0 0 0 12 2z" class="animate-spin origin-center"/>';
+
+    const res = await fetch(`/api/run/${SCENARIO_ID}`, { method: 'POST' });
+    if (!res.ok) {
+      label.textContent = 'Failed to start';
+      btn.disabled = false;
+      return;
+    }
+    _pollTimer = setInterval(async () => {
+      const s = await fetch(`/api/run/${SCENARIO_ID}/status`);
+      const data = await s.json();
+      if (data.status === 'done' || data.status === 'error') {
+        clearInterval(_pollTimer);
+        window.location.reload();
+      }
+    }, 3000);
+  }
 
   document.querySelectorAll('[data-step]').forEach(card => {
     const stepId = card.dataset.step;

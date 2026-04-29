@@ -2,6 +2,7 @@
 
 import json
 import sys
+import threading
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
@@ -14,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from engine.parser import parse_workbook  # noqa: E402
+from engine.runner import run_scenario  # noqa: E402
 
 SCRIPTS_DIR = ROOT / "scripts"
 RUNS_DIR = ROOT / "runs"
@@ -22,6 +24,9 @@ STATUS_FILE = STORAGE_DIR / "step_status.json"
 
 RUNS_DIR.mkdir(exist_ok=True)
 STORAGE_DIR.mkdir(exist_ok=True)
+
+# In-memory run state: scenario_id -> {status, run_id, passed?, error?}
+_ACTIVE_RUNS: dict[str, dict] = {}
 
 
 VALID_STATUSES = {"pass", "fail", "blocked", "not_tested"}
@@ -188,6 +193,43 @@ def scenario_detail(request: Request, scenario_id: str):
             "step_statuses": step_statuses,
         },
     )
+
+
+@app.post("/api/run/{scenario_id}")
+def trigger_run(scenario_id: str):
+    scenarios = _load_scenarios()
+    scenario = next((s for s in scenarios if s.scenario_id == scenario_id), None)
+    if not scenario:
+        raise HTTPException(404, "Scenario not found")
+
+    if _ACTIVE_RUNS.get(scenario_id, {}).get("status") == "running":
+        return JSONResponse({"ok": False, "reason": "already running"}, status_code=409)
+
+    run_id = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    _ACTIVE_RUNS[scenario_id] = {"status": "running", "run_id": run_id}
+
+    def _run():
+        try:
+            result = run_scenario(scenario, runs_root=RUNS_DIR, headless=True)
+            _ACTIVE_RUNS[scenario_id] = {
+                "status": "done",
+                "run_id": result.run_id,
+                "passed": result.passed,
+            }
+        except Exception as exc:
+            _ACTIVE_RUNS[scenario_id] = {
+                "status": "error",
+                "run_id": run_id,
+                "error": str(exc),
+            }
+
+    threading.Thread(target=_run, daemon=True).start()
+    return JSONResponse({"ok": True, "run_id": run_id, "status": "running"})
+
+
+@app.get("/api/run/{scenario_id}/status")
+def run_status(scenario_id: str):
+    return JSONResponse(_ACTIVE_RUNS.get(scenario_id, {"status": "idle"}))
 
 
 @app.post("/api/step-status")

@@ -22,10 +22,16 @@ def run_phase1(scenario: TestScenario) -> ScenarioResult:
     return run_scenario(scenario, max_steps=1)
 
 
-def run_scenario(scenario: TestScenario, max_steps: int | None = None) -> ScenarioResult:
+def run_scenario(
+    scenario: TestScenario,
+    max_steps: int | None = None,
+    runs_root: "Path | str | None" = None,
+    headless: bool = False,
+) -> ScenarioResult:
     """Login to SF, run all (or first *max_steps*) steps, record video."""
     run_id = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-    runs_dir = Path("runs") / run_id
+    base = Path(runs_root) if runs_root else Path("runs")
+    runs_dir = base / run_id
     runs_dir.mkdir(parents=True, exist_ok=True)
 
     username = os.environ["SF_USERNAME"]
@@ -36,7 +42,7 @@ def run_scenario(scenario: TestScenario, max_steps: int | None = None) -> Scenar
     result = ScenarioResult(scenario_id=scenario.scenario_id, run_id=run_id, passed=False)
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=False, slow_mo=400)
+        browser = pw.chromium.launch(headless=headless, slow_mo=0 if headless else 400)
         context = browser.new_context(
             record_video_dir=str(runs_dir),
             record_video_size={"width": 1280, "height": 720},
