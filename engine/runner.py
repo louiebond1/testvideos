@@ -152,13 +152,19 @@ def _login(page: Page, url: str, username: str, password: str) -> None:
 
 def _run_step(page: Page, step, output_dir: str, feedback: str = "") -> StepResult:
     t0 = time.time()
-    last_exc = None
 
+    # ── Direct command mode: feedback overrides everything ────────────────────
+    # If feedback contains lines like "CLICK: Recruiting" the runner executes
+    # them literally — no AI, no guessing, guaranteed.
+    if _has_direct_commands(feedback):
+        print(f"  [direct] {step.step_id}: running manual command override")
+        return _run_direct_commands(page, step, output_dir, feedback, t0)
+
+    last_exc = None
     for attempt in range(3):
         try:
             if attempt > 0:
                 page.wait_for_timeout(2000)
-                # On retry, take a screenshot and ask the coach what to do
                 shot_pre = os.path.join(output_dir, f"{step.step_id}_retry{attempt}.png")
                 try:
                     page.screenshot(path=shot_pre, full_page=False)
@@ -170,7 +176,6 @@ def _run_step(page: Page, step, output_dir: str, feedback: str = "") -> StepResu
                     if guidance:
                         print(f"  [coach] attempt {attempt+1}: {guidance.get('notes','')}")
                         _execute_guidance(page, guidance)
-                        # Fall through to _dispatch to verify the action actually worked
 
             _dispatch(page, step)
             shot = os.path.join(output_dir, f"{step.step_id}.png")
@@ -200,6 +205,141 @@ def _run_step(page: Page, step, output_dir: str, feedback: str = "") -> StepResu
         duration_s=round(time.time() - t0, 2),
         screenshot_path=shot,
     )
+
+
+_CMD_PREFIXES = ("CLICK:", "CLICK_XY:", "TYPE:", "PRESS:", "WAIT:", "FILL:", "SHADOW_CLICK:")
+
+
+def _has_direct_commands(feedback: str) -> bool:
+    return any(line.strip().upper().startswith(_CMD_PREFIXES) for line in (feedback or "").splitlines())
+
+
+def _run_direct_commands(page: Page, step, output_dir: str, feedback: str, t0: float) -> StepResult:
+    """Execute a step using direct commands written in the feedback box."""
+    try:
+        for line in feedback.strip().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if ":" not in line:
+                continue
+            cmd, _, arg = line.partition(":")
+            cmd = cmd.strip().upper()
+            arg = arg.strip()
+
+            if cmd == "CLICK":
+                page.get_by_text(arg, exact=False).first.click(timeout=8_000)
+            elif cmd == "SHADOW_CLICK":
+                if not _shadow_click(page, arg):
+                    raise RuntimeError(f"SHADOW_CLICK: could not find '{arg}' in any shadow root")
+            elif cmd == "CLICK_XY":
+                x, y = [float(v.strip()) for v in arg.split(",")]
+                page.mouse.click(x, y)
+            elif cmd == "TYPE":
+                page.keyboard.type(arg)
+            elif cmd == "PRESS":
+                page.keyboard.press(arg)
+            elif cmd == "WAIT":
+                page.wait_for_timeout(int(arg))
+            elif cmd == "FILL":
+                # "FILL: Field label | value"
+                label, _, value = arg.partition("|")
+                page.get_by_label(label.strip(), exact=False).first.fill(value.strip(), timeout=5_000)
+
+            page.wait_for_timeout(600)
+
+        shot = os.path.join(output_dir, f"{step.step_id}.png")
+        page.screenshot(path=shot, full_page=False)
+        return StepResult(step_id=step.step_id, passed=True,
+                          duration_s=round(time.time() - t0, 2), screenshot_path=shot)
+    except Exception as exc:
+        shot = os.path.join(output_dir, f"{step.step_id}_fail.png")
+        try:
+            page.screenshot(path=shot, full_page=False)
+        except Exception:
+            shot = ""
+        return StepResult(step_id=step.step_id, passed=False,
+                          error_message=str(exc),
+                          duration_s=round(time.time() - t0, 2), screenshot_path=shot)
+
+
+def _shadow_click(page: Page, text: str) -> bool:
+    """Click an element by exact text, searching recursively through all shadow roots."""
+    return page.evaluate(
+        """(targetText) => {
+            function search(root) {
+                const els = root.querySelectorAll('*');
+                for (const el of els) {
+                    if (el.shadowRoot) {
+                        if (search(el.shadowRoot)) return true;
+                    }
+                    const t = (el.innerText || el.textContent || '').trim();
+                    if (t === targetText && el.offsetWidth > 0 && el.offsetHeight > 0) {
+                        el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+                        return true;
+                    }
+                }
+                return false;
+            }
+            return search(document.body);
+        }""",
+        text,
+    )
+
+
+def _proxy_login(page: Page, proxy_name: str) -> None:
+    """Switch to a proxy user in SF: click avatar → Proxy Now → search → select → OK."""
+    proxy_name = proxy_name.strip()
+
+    # Click user avatar / initials badge (top-right corner)
+    clicked_avatar = False
+    for sel in [
+        "[data-component-id*='avatar']",
+        "[aria-label*='avatar' i]",
+        "[class*='userAvatar']",
+        "[class*='user-avatar']",
+        "button[class*='Avatar']",
+    ]:
+        try:
+            page.locator(sel).first.click(timeout=2_000)
+            clicked_avatar = True
+            break
+        except Exception:
+            pass
+
+    if not clicked_avatar:
+        # Fallback: top-right corner click
+        page.mouse.click(1240, 40)
+
+    page.wait_for_timeout(1200)
+
+    # Click "Proxy Now"
+    for label in ["Proxy Now", "Proxy now", "Switch User", "Act as Proxy"]:
+        try:
+            page.get_by_text(label, exact=False).first.click(timeout=4_000)
+            break
+        except Exception:
+            pass
+    page.wait_for_timeout(1000)
+
+    # Type name into the proxy search box
+    page.keyboard.type(proxy_name, delay=80)
+    page.wait_for_timeout(2000)
+
+    # Click matching result
+    page.get_by_text(proxy_name, exact=False).first.click(timeout=8_000)
+    page.wait_for_timeout(500)
+
+    # Confirm / OK
+    for label in ["OK", "Confirm", "Apply", "Select", "Done"]:
+        try:
+            page.get_by_role("button", name=label).first.click(timeout=3_000)
+            page.wait_for_load_state("networkidle", timeout=30_000)
+            return
+        except Exception:
+            pass
+
+    page.wait_for_load_state("networkidle", timeout=30_000)
 
 
 def _execute_guidance(page: Page, guidance: dict) -> None:
@@ -237,6 +377,16 @@ def _dispatch(page: Page, step) -> None:
         if url:
             page.goto(url, wait_until="networkidle", timeout=30_000)
             return
+
+    # ── Proxy login ───────────────────────────────────────────────────────────
+    if "proxy" in action:
+        name = data.strip() or _first_quoted(step.action) or _word_after_click(step.action)
+        if not name:
+            # Try extracting "as <Name>" pattern
+            m = re.search(r"\bas\s+([A-Z][a-zA-Z ]{2,40})", step.action)
+            name = m.group(1).strip() if m else "Alex Brackley"
+        _proxy_login(page, name)
+        return
 
     # ── Recruiting shortcut — catch any action that mentions navigating to Recruiting ─
     if "recruit" in action and any(k in action for k in ("navigate", "module", "picker", "go to", "open")):
@@ -308,6 +458,17 @@ def _module_picker_nav(page: Page, path: list[str]) -> None:
     page.wait_for_timeout(1500)  # wait for dropdown animation
 
     first_item = path[0]
+
+    # ── Approach 0: JavaScript recursive shadow DOM search (most reliable) ────
+    try:
+        clicked = _shadow_click(page, first_item)
+        if clicked:
+            page.wait_for_load_state("networkidle", timeout=25_000)
+            _verify_module_nav(page, first_item)
+            _module_picker_subpath(page, path[1:])
+            return
+    except Exception:
+        pass
 
     # ── Approach 1: Playwright text locator (pierces shadow DOM) ─────────────
     for exact in (True, False):

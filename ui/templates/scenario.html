@@ -76,7 +76,7 @@
         <div id="feedback-box" class="hidden mt-4 border-t border-slate-100 pt-4">
           <p class="text-xs font-medium text-slate-600 mb-2">Feedback for <span id="feedback-step-label" class="font-mono text-violet-600"></span></p>
           <textarea id="feedback-text" rows="4"
-                    placeholder="e.g. The menu opened but you didn't click Recruiting — look for it in the dropdown list and click it directly."
+                    placeholder="Plain text: describe what went wrong (AI interprets it).&#10;&#10;OR use direct commands (executes exactly, no AI):&#10;SHADOW_CLICK: Recruiting&#10;CLICK: Proxy Now&#10;CLICK_XY: 500, 350&#10;TYPE: Alex Brackley&#10;PRESS: Enter&#10;WAIT: 2000"
                     class="w-full text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-400 transition"></textarea>
           <button onclick="saveAndRetry()"
                   id="retry-btn"
