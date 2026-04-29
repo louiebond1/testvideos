@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Test Scripts — EX3 TestOps{% endblock %}
+
+{% block content %}
+<header class="bg-white border-b border-gray-200 px-8 py-5 flex items-center justify-between">
+  <nav class="text-sm text-slate-500 flex items-center gap-2">
+    <a href="/" class="hover:text-slate-700">Test Hub</a>
+    <span class="text-slate-300">›</span>
+    <span class="text-slate-900 font-medium">Test Scripts</span>
+  </nav>
+  <div class="flex items-center gap-3">
+    <button class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+      Export
+    </button>
+    <button class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-lg transition">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+      Ask a Question
+    </button>
+  </div>
+</header>
+
+<div class="flex-1 overflow-y-auto px-8 py-8">
+  <div class="max-w-5xl mx-auto">
+    <div class="flex items-start justify-between mb-2">
+      <div>
+        <h1 class="text-3xl font-bold tracking-tight">Test Script Library</h1>
+        <p class="text-slate-500 mt-2 text-sm">Click any scenario to expand steps · Change status on each step · Ask AI for help</p>
+      </div>
+      <button class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        Expand All
+      </button>
+    </div>
+
+    <!-- Filter pills -->
+    <div class="flex items-center gap-2 mt-8 flex-wrap">
+      {% set pills = [("all","All",""),("pass","Pass","emerald"),("fail","Fail","rose"),("blocked","Blocked","amber"),("not_tested","Not Tested","slate")] %}
+      {% for key, label, color in pills %}
+        <button data-filter="{{ key }}"
+                class="filter-pill px-4 py-1.5 text-sm font-medium rounded-full border border-slate-200 bg-white hover:border-slate-300 transition flex items-center gap-2 {% if key == 'all' %}ring-2 ring-violet-200 border-violet-400{% endif %}">
+          {% if color %}<span class="w-2 h-2 rounded-full bg-{{ color }}-500"></span>{% endif %}
+          {{ label }}
+        </button>
+      {% endfor %}
+    </div>
+
+    <!-- Search -->
+    <div class="mt-4 relative">
+      <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+      <input id="search" type="text" placeholder="Search steps..."
+             class="w-full pl-10 pr-4 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-400 transition" />
+    </div>
+
+    <!-- Categories -->
+    <div class="mt-8 space-y-10">
+      {% for group in groups %}
+      <section data-group>
+        <div class="flex items-center gap-3 mb-4">
+          <h2 class="text-lg font-bold text-slate-900">{{ group.label }}</h2>
+          <span class="px-3 py-1 text-xs font-medium bg-white border border-slate-200 rounded-full text-slate-600">
+            {{ group.scenario_count }} scenarios · {{ group.step_count }} steps
+          </span>
+        </div>
+        <div class="space-y-2">
+          {% for s in group.scenarios %}
+          <a href="/scenario/{{ s.id }}" data-card data-status="{{ s.status }}" data-search="{{ s.id }} {{ s.name|lower }} {{ s.role|lower }}"
+             class="group flex items-center gap-4 px-5 py-4 bg-white border border-slate-200 rounded-xl hover:border-slate-300 hover:shadow-sm transition">
+            <svg class="w-4 h-4 text-slate-400 group-hover:text-slate-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            <span class="px-2.5 py-0.5 text-xs font-mono font-medium bg-sky-50 text-sky-700 border border-sky-100 rounded-md flex-shrink-0">{{ s.id }}</span>
+            <span class="font-medium text-slate-900 flex-1 truncate">{{ s.name }}</span>
+            <span class="px-2.5 py-0.5 text-xs font-medium bg-{{ s.role_color }}-50 text-{{ s.role_color }}-700 border border-{{ s.role_color }}-200 rounded-full flex-shrink-0">{{ s.role }}</span>
+            <span class="text-xs text-slate-500 flex-shrink-0 tabular-nums">{{ s.passed_steps }}/{{ s.step_count }}</span>
+            <button class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 flex-shrink-0">
+              <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M12 1l3 6 6 1-4.5 4.5L18 19l-6-3-6 3 1.5-6.5L3 8l6-1z"/></svg>
+              AI
+            </button>
+            {% if s.status == 'fail' or (s.id == 'RCM-RC-101') %}
+            <span class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-slate-900 rounded-md flex-shrink-0">
+              <span class="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse"></span>
+              Recording
+            </span>
+            {% endif %}
+          </a>
+          {% endfor %}
+        </div>
+      </section>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<script>
+  // Filter pills + search
+  const cards = document.querySelectorAll('[data-card]');
+  const pills = document.querySelectorAll('.filter-pill');
+  const search = document.getElementById('search');
+  let currentFilter = 'all';
+
+  function applyFilter() {
+    const q = (search.value || '').toLowerCase();
+    cards.forEach(card => {
+      const status = card.dataset.status;
+      const text = card.dataset.search;
+      const matchesFilter = currentFilter === 'all' || status === currentFilter;
+      const matchesSearch = !q || text.includes(q);
+      card.style.display = matchesFilter && matchesSearch ? '' : 'none';
+    });
+    // Hide empty groups
+    document.querySelectorAll('[data-group]').forEach(g => {
+      const visible = Array.from(g.querySelectorAll('[data-card]')).some(c => c.style.display !== 'none');
+      g.style.display = visible ? '' : 'none';
+    });
+  }
+
+  pills.forEach(p => p.addEventListener('click', () => {
+    pills.forEach(x => x.classList.remove('ring-2', 'ring-violet-200', 'border-violet-400'));
+    p.classList.add('ring-2', 'ring-violet-200', 'border-violet-400');
+    currentFilter = p.dataset.filter;
+    applyFilter();
+  }));
+  search.addEventListener('input', applyFilter);
+</script>
+{% endblock %}

@@ -2,6 +2,8 @@
 brain/brain.db
 recordings/
 screenshots/
+runs/
+storage/step_status.json
 __pycache__/
 *.pyc
 *.pyo
@@ -11,3 +13,5 @@ venv/
 dist/
 build/
 .pytest_cache/
+scripts/*.png
+scripts/debug_menu.py

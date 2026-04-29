@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}{{ scenario.scenario_id }} — EX3 TestOps{% endblock %}
+
+{% block content %}
+<header class="bg-white border-b border-gray-200 px-8 py-5 flex items-center justify-between">
+  <nav class="text-sm text-slate-500 flex items-center gap-2">
+    <a href="/" class="hover:text-slate-700">Test Hub</a>
+    <span class="text-slate-300">›</span>
+    <a href="/" class="hover:text-slate-700">Test Scripts</a>
+    <span class="text-slate-300">›</span>
+    <span class="text-slate-900 font-medium font-mono text-xs">{{ scenario.scenario_id }}</span>
+  </nav>
+  <div class="flex items-center gap-3">
+    <button class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition">
+      <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      Run scenario
+    </button>
+  </div>
+</header>
+
+<div class="flex-1 overflow-y-auto px-8 py-8">
+  <div class="max-w-5xl mx-auto">
+    <div class="flex items-center gap-3 mb-2">
+      <span class="px-2.5 py-0.5 text-xs font-mono font-medium bg-sky-50 text-sky-700 border border-sky-100 rounded-md">{{ scenario.scenario_id }}</span>
+      <span class="px-2.5 py-0.5 text-xs font-medium bg-{{ role_color }}-50 text-{{ role_color }}-700 border border-{{ role_color }}-200 rounded-full">{{ scenario.role }}</span>
+    </div>
+    <h1 class="text-3xl font-bold tracking-tight">{{ scenario.name }}</h1>
+    <p class="text-slate-500 mt-1 text-sm">{{ scenario.steps|length }} steps · Module {{ scenario.module }}</p>
+
+    {% if run %}
+    <div class="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-semibold text-slate-700">Latest run</h3>
+          <span class="text-xs text-slate-500 font-mono">{{ run.id }}</span>
+        </div>
+        {% if run.video_url %}
+        <video controls class="w-full rounded-lg bg-slate-900" src="{{ run.video_url }}"></video>
+        {% else %}
+        <p class="text-sm text-slate-500">No video for this run.</p>
+        {% endif %}
+      </div>
+      <div class="bg-white border border-slate-200 rounded-xl p-4">
+        <h3 class="text-sm font-semibold text-slate-700 mb-3">Step screenshots</h3>
+        <div class="space-y-2 max-h-96 overflow-y-auto scroll-thin">
+          {% for shot in run.screenshots %}
+          <a href="{{ shot.url }}" target="_blank" class="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50">
+            {% if shot.passed %}
+            <span class="w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-xs">✓</span>
+            {% else %}
+            <span class="w-5 h-5 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center text-xs">✗</span>
+            {% endif %}
+            <span class="text-xs font-mono text-slate-600 flex-1 truncate">{{ shot.step_id }}</span>
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="mt-8 space-y-2">
+      {% for step in scenario.steps %}
+      {% set status = step_statuses[step.step_id] %}
+      <div data-step="{{ step.step_id }}" data-status="{{ status }}"
+           class="bg-white border rounded-xl p-5 transition
+                  {% if status == 'pass' %}border-emerald-200 bg-emerald-50/30
+                  {% elif status == 'fail' %}border-rose-200 bg-rose-50/30
+                  {% elif status == 'blocked' %}border-amber-200 bg-amber-50/30
+                  {% else %}border-slate-200{% endif %}">
+        <div class="flex items-start gap-4">
+          <span class="status-dot mt-1 w-2.5 h-2.5 rounded-full flex-shrink-0
+                       {% if status == 'pass' %}bg-emerald-500
+                       {% elif status == 'fail' %}bg-rose-500
+                       {% elif status == 'blocked' %}bg-amber-500
+                       {% else %}bg-slate-300{% endif %}"></span>
+          <span class="px-2.5 py-0.5 text-xs font-mono font-medium bg-slate-100 text-slate-700 rounded-md flex-shrink-0">{{ step.step_id }}</span>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm text-slate-900">{{ step.action }}</p>
+            {% if step.test_data and step.test_data != "—" %}
+            <p class="text-xs text-slate-500 mt-2"><span class="font-medium text-slate-600">Data:</span> <code class="font-mono text-slate-600">{{ step.test_data }}</code></p>
+            {% endif %}
+            <p class="text-xs text-emerald-700 mt-2"><span class="font-medium">Expected:</span> {{ step.expected_result }}</p>
+
+            <div class="mt-4 flex items-center gap-2">
+              <button data-set="pass" class="status-btn px-3 py-1 text-xs font-medium rounded-md border transition
+                                              {% if status == 'pass' %}bg-emerald-500 text-white border-emerald-500
+                                              {% else %}bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50{% endif %}">
+                ✓ Pass
+              </button>
+              <button data-set="fail" class="status-btn px-3 py-1 text-xs font-medium rounded-md border transition
+                                              {% if status == 'fail' %}bg-rose-500 text-white border-rose-500
+                                              {% else %}bg-white text-rose-700 border-rose-200 hover:bg-rose-50{% endif %}">
+                ✗ Fail
+              </button>
+              <button data-set="blocked" class="status-btn px-3 py-1 text-xs font-medium rounded-md border transition
+                                                 {% if status == 'blocked' %}bg-amber-500 text-white border-amber-500
+                                                 {% else %}bg-white text-amber-700 border-amber-200 hover:bg-amber-50{% endif %}">
+                ◐ Blocked
+              </button>
+              {% if status != 'not_tested' %}
+              <button data-set="not_tested" class="status-btn ml-2 px-3 py-1 text-xs font-medium rounded-md border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 transition">
+                Reset
+              </button>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+<script>
+  const SCENARIO_ID = "{{ scenario.scenario_id }}";
+
+  document.querySelectorAll('[data-step]').forEach(card => {
+    const stepId = card.dataset.step;
+    card.querySelectorAll('.status-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const status = btn.dataset.set;
+        const fd = new FormData();
+        fd.append('scenario_id', SCENARIO_ID);
+        fd.append('step_id', stepId);
+        fd.append('status', status);
+        const res = await fetch('/api/step-status', { method: 'POST', body: fd });
+        if (res.ok) {
+          // Reload to re-render with new status colours
+          window.location.reload();
+        }
+      });
+    });
+  });
+</script>
+  </div>
+</div>
+{% endblock %}

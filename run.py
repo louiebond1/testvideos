@@ -4,6 +4,8 @@ import argparse
 import sys
 from dotenv import load_dotenv
 
+sys.stdout.reconfigure(encoding="utf-8")
+
 load_dotenv()
 
 
@@ -23,8 +25,48 @@ def main() -> None:
         print("Dry run mode — parsing workbook only.")
         _dry_run(args)
     else:
-        print("Full run mode — not yet implemented (Stage 3+).")
-        sys.exit(0)
+        import os
+        from engine.parser import parse_workbook
+        from engine.runner import run_scenario
+
+        workbook_path = os.path.join("scripts", f"EX3_{args.module}_Workbook_V1_1.xlsx")
+        if not os.path.exists(workbook_path):
+            print(f"Workbook not found: {workbook_path}")
+            sys.exit(1)
+
+        scenarios = parse_workbook(workbook_path)
+
+        if args.scenario:
+            scenario = next((s for s in scenarios if s.scenario_id == args.scenario), None)
+            if not scenario:
+                print(f"Scenario not found: {args.scenario}")
+                sys.exit(1)
+        else:
+            # Default to first non-login scenario
+            scenario = next(
+                (s for s in scenarios if not s.scenario_id.startswith("LOGIN")),
+                scenarios[0],
+            )
+
+        print(f"\nScenario : {scenario.scenario_id} — {scenario.name}")
+        print(f"Role     : {scenario.role}")
+        print(f"Steps    : {len(scenario.steps)} total\n")
+
+        result = run_scenario(scenario)
+
+        print(f"\n{'─' * 50}")
+        print(f"Result   : {'PASS ✓' if result.passed else 'FAIL ✗'}")
+        print(f"Run ID   : {result.run_id}")
+        if result.s3_url:
+            print(f"Video    : {result.s3_url}")
+        for sr in result.steps:
+            mark = "✓" if sr.passed else "✗"
+            print(f"  {mark} {sr.step_id}  ({sr.duration_s}s)")
+            if sr.screenshot_path:
+                print(f"    Screenshot: {sr.screenshot_path}")
+            if sr.error_message:
+                print(f"    Error     : {sr.error_message}")
+        print("Done.")
 
 
 def _dry_run(args: argparse.Namespace) -> None:
