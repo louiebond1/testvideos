@@ -25,6 +25,7 @@
       <span class="px-2.5 py-0.5 text-xs font-mono font-medium bg-sky-50 text-sky-700 border border-sky-100 rounded-md">{{ scenario.scenario_id }}</span>
       <span class="px-2.5 py-0.5 text-xs font-medium bg-{{ role_color }}-50 text-{{ role_color }}-700 border border-{{ role_color }}-200 rounded-full">{{ scenario.role }}</span>
     </div>
+    <div id="run-error" class="hidden mt-4 p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs font-mono text-rose-700"></div>
     <h1 class="text-3xl font-bold tracking-tight">{{ scenario.name }}</h1>
     <p class="text-slate-500 mt-1 text-sm">{{ scenario.steps|length }} steps · Module {{ scenario.module }}</p>
 
@@ -147,9 +148,16 @@
     _pollTimer = setInterval(async () => {
       const s = await fetch(`/api/run/${SCENARIO_ID}/status`);
       const data = await s.json();
-      if (data.status === 'done' || data.status === 'error') {
+      if (data.status === 'done') {
         clearInterval(_pollTimer);
         window.location.reload();
+      } else if (data.status === 'error') {
+        clearInterval(_pollTimer);
+        label.textContent = 'Error — see below';
+        btn.disabled = false;
+        btn.classList.replace('bg-slate-900', 'bg-rose-600');
+        const errBox = document.getElementById('run-error');
+        if (errBox) { errBox.textContent = data.error || 'Unknown error'; errBox.classList.remove('hidden'); }
       }
     }, 3000);
   }

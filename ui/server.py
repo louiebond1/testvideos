@@ -8,12 +8,14 @@ from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT / ".env")
 sys.path.insert(0, str(ROOT))
 from engine.parser import parse_workbook  # noqa: E402
 from engine.runner import run_scenario  # noqa: E402
@@ -240,6 +242,9 @@ def trigger_run(scenario_id: str):
                 "passed": result.passed,
             }
         except Exception as exc:
+            import traceback
+            print(f"[RUN ERROR] {scenario_id}: {exc}")
+            traceback.print_exc()
             _ACTIVE_RUNS[scenario_id] = {
                 "status": "error",
                 "run_id": run_id,
