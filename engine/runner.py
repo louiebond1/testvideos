@@ -293,11 +293,12 @@ _MENU_ORDER = [
 
 
 def _module_picker_nav(page: Page, path: list[str]) -> None:
-    """Open the SF module picker and click items by screen coordinates.
+    """Open the SF module picker and navigate to the target module.
 
-    SF renders the dropdown in a closed shadow root so JS/CSS selectors can't
-    reach it. We calculate each item's position from the Home button's bounding
-    box instead.
+    Tries three approaches in order:
+    1. Playwright text locator (pierces shadow DOM)
+    2. Coordinate-based click calculated from Home button position
+    3. Vision-based click via Claude coach (screenshot → coordinates)
     """
     btn_loc = page.locator("button:has-text('Home')").first
     btn = btn_loc.bounding_box()
@@ -305,24 +306,58 @@ def _module_picker_nav(page: Page, path: list[str]) -> None:
         raise RuntimeError("Module picker Home button not found")
 
     btn_loc.click(timeout=10_000)
-    page.wait_for_timeout(1500)  # wait for dropdown animation to complete
+    page.wait_for_timeout(2000)  # wait for dropdown animation
 
     first_item = path[0]
-    if first_item not in _MENU_ORDER:
-        raise RuntimeError(f"'{first_item}' not in known menu order — add it to _MENU_ORDER")
 
-    idx = _MENU_ORDER.index(first_item)
-    item_h = 30  # px per menu item in the dropdown
-    menu_x = btn["x"] + 80
-    menu_y = btn["y"] + btn["height"] + 6 + (idx * item_h) + (item_h // 2)
+    # ── Approach 1: Playwright text locator (works if shadow DOM is pierced) ──
+    try:
+        page.get_by_text(first_item, exact=True).first.click(timeout=3_000)
+        page.wait_for_load_state("networkidle", timeout=25_000)
+        _module_picker_subpath(page, path[1:])
+        return
+    except Exception:
+        pass
 
-    page.mouse.move(menu_x, menu_y)
-    page.wait_for_timeout(300)
-    page.mouse.click(menu_x, menu_y)
-    page.wait_for_load_state("networkidle", timeout=25_000)
+    # ── Approach 2: Coordinate-based click ────────────────────────────────────
+    try:
+        if first_item not in _MENU_ORDER:
+            raise RuntimeError(f"'{first_item}' not in _MENU_ORDER")
+        idx = _MENU_ORDER.index(first_item)
+        item_h = 30
+        menu_x = btn["x"] + 80
+        menu_y = btn["y"] + btn["height"] + 6 + (idx * item_h) + (item_h // 2)
+        page.mouse.move(menu_x, menu_y)
+        page.wait_for_timeout(300)
+        page.mouse.click(menu_x, menu_y)
+        page.wait_for_load_state("networkidle", timeout=25_000)
+        _module_picker_subpath(page, path[1:])
+        return
+    except Exception:
+        pass
 
-    # Any remaining path items are on the destination page — use normal selectors
-    for item in path[1:]:
+    # ── Approach 3: Vision-based — screenshot the open menu, ask Claude ───────
+    import tempfile
+    shot = tempfile.mktemp(suffix=".png")
+    page.screenshot(path=shot, full_page=False)
+    from engine.coach import get_step_guidance
+    guidance = get_step_guidance(
+        shot,
+        f"Click '{first_item}' in the open module picker dropdown",
+        f"{first_item} module opens",
+        f"The module picker menu is open. Click '{first_item}' in the list.",
+    )
+    if guidance:
+        _execute_guidance(page, guidance)
+        page.wait_for_load_state("networkidle", timeout=25_000)
+        _module_picker_subpath(page, path[1:])
+        return
+
+    raise RuntimeError(f"All three approaches failed to click '{first_item}' in module picker")
+
+
+def _module_picker_subpath(page: Page, remaining: list[str]) -> None:
+    for item in remaining:
         page.get_by_text(item, exact=False).first.click(timeout=10_000)
         page.wait_for_load_state("networkidle", timeout=20_000)
 
