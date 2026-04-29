@@ -1,6 +1,7 @@
 """EX3 TestOps — FastAPI dashboard."""
 
 import json
+import os
 import sys
 import threading
 from pathlib import Path
@@ -17,13 +18,16 @@ sys.path.insert(0, str(ROOT))
 from engine.parser import parse_workbook  # noqa: E402
 from engine.runner import run_scenario  # noqa: E402
 
+CLIENT_ID = os.getenv("CLIENT_ID", "default")
+
 SCRIPTS_DIR = ROOT / "scripts"
-RUNS_DIR = ROOT / "runs"
-STORAGE_DIR = ROOT / "storage"
+RUNS_DIR = ROOT / "runs" / CLIENT_ID
+STORAGE_DIR = ROOT / "storage" / CLIENT_ID
 STATUS_FILE = STORAGE_DIR / "step_status.json"
 
-RUNS_DIR.mkdir(exist_ok=True)
-STORAGE_DIR.mkdir(exist_ok=True)
+RUNS_DIR.mkdir(parents=True, exist_ok=True)
+STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+(ROOT / "storage" / "global").mkdir(parents=True, exist_ok=True)
 
 # In-memory run state: scenario_id -> {status, run_id, passed?, error?}
 _ACTIVE_RUNS: dict[str, dict] = {}
@@ -162,6 +166,7 @@ def home(request: Request):
             "groups": _grouped_scenarios(),
             "stats": _stats(),
             "active": "all",
+            "client_id": CLIENT_ID,
         },
     )
 
@@ -208,6 +213,7 @@ def scenario_detail(request: Request, scenario_id: str):
             "stats": _stats(),
             "step_statuses": step_statuses,
             "step_feedback": feedback,
+            "client_id": CLIENT_ID,
         },
     )
 

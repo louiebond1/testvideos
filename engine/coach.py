@@ -1,9 +1,38 @@
-"""AI coach — uses Claude vision to guide the runner past failures."""
+"""AI coach — uses Claude vision to guide the runner past failures.
+
+Successful coaching patterns are saved to storage/global/sf_notes.md
+so every new client deployment starts with accumulated SF knowledge.
+"""
 
 import base64
 import json
 import os
+from datetime import datetime
 from pathlib import Path
+
+_STORAGE_ROOT = Path(__file__).resolve().parent.parent / "storage"
+_GLOBAL_NOTES = _STORAGE_ROOT / "global" / "sf_notes.md"
+
+
+def _load_global_notes() -> str:
+    if _GLOBAL_NOTES.exists():
+        return _GLOBAL_NOTES.read_text(encoding="utf-8")
+    return ""
+
+
+def save_successful_pattern(step_action: str, feedback: str, guidance: dict) -> None:
+    """Append a successful coaching result to the global SF knowledge base."""
+    _GLOBAL_NOTES.parent.mkdir(parents=True, exist_ok=True)
+    approach = guidance.get("approach", "unknown")
+    notes = guidance.get("notes", "")
+    entry = (
+        f"\n### {datetime.utcnow().date()} — {step_action[:80]}\n"
+        f"- **Feedback given:** {feedback}\n"
+        f"- **Solution:** `{approach}` — {notes}\n"
+        f"- **Full guidance:** `{json.dumps(guidance)}`\n"
+    )
+    with open(_GLOBAL_NOTES, "a", encoding="utf-8") as f:
+        f.write(entry)
 
 
 def get_step_guidance(screenshot_path: str, step_action: str, step_expected: str, feedback: str) -> dict | None:
@@ -23,6 +52,9 @@ def get_step_guidance(screenshot_path: str, step_action: str, step_expected: str
     if not Path(screenshot_path).exists():
         return None
 
+    global_notes = _load_global_notes()
+    notes_section = f"\n\nPrevious SF navigation learnings (apply these first):\n{global_notes}" if global_notes else ""
+
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=key)
@@ -33,7 +65,7 @@ def get_step_guidance(screenshot_path: str, step_action: str, step_expected: str
 
 Step action: {step_action}
 Expected result: {step_expected}
-Human feedback about what went wrong: {feedback}
+Human feedback about what went wrong: {feedback}{notes_section}
 
 Look at the screenshot carefully. Decide the best way for Playwright to complete this step.
 
@@ -65,7 +97,6 @@ Return ONLY valid JSON — no markdown, no explanation outside the JSON:
         )
 
         raw = msg.content[0].text.strip()
-        # Strip markdown code fences if present
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):

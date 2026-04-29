@@ -19,6 +19,9 @@
       <div class="px-6 py-6 border-b border-slate-800">
         <h1 class="text-base font-bold tracking-tight text-white">SUCCESSFACTORS RCM</h1>
         <p class="text-xs text-slate-400 mt-1">UAT &amp; Test Management</p>
+        {% if client_id is defined %}
+        <span class="mt-2 inline-block px-2 py-0.5 text-[10px] font-mono font-medium bg-violet-500/20 text-violet-300 border border-violet-500/30 rounded">{{ client_id }}</span>
+        {% endif %}
       </div>
 
       <nav class="flex-1 overflow-y-auto scroll-thin px-3 py-6 space-y-6">

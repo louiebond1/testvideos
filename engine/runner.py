@@ -12,7 +12,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 from playwright.sync_api import sync_playwright, Page
 
 from models.dataclasses import TestScenario, StepResult, ScenarioResult
-from engine.coach import get_step_guidance
+from engine.coach import get_step_guidance, save_successful_pattern
 
 
 _DEFAULT_SF_URL = "https://hcm-eu10-preview.hr.cloud.sap/login?company=veritasp01T2"
@@ -100,16 +100,30 @@ def run_scenario(
 # ── Feedback loader ───────────────────────────────────────────────────────────
 
 def _load_feedback(scenario_id: str) -> dict:
-    """Load stored human feedback for each step of a scenario."""
-    feedback_file = Path(__file__).resolve().parent.parent / "storage" / "step_feedback.json"
-    if not feedback_file.exists():
-        return {}
-    try:
-        import json
-        data = json.loads(feedback_file.read_text())
-        return data.get(scenario_id, {})
-    except Exception:
-        return {}
+    """Load stored human feedback — client-specific first, then global fallback."""
+    import json
+    root = Path(__file__).resolve().parent.parent / "storage"
+    client_id = os.getenv("CLIENT_ID", "default")
+
+    # Client-specific feedback
+    client_file = root / client_id / "step_feedback.json"
+    client_data = {}
+    if client_file.exists():
+        try:
+            client_data = json.loads(client_file.read_text()).get(scenario_id, {})
+        except Exception:
+            pass
+
+    # Global feedback (shared across all clients — legacy flat file)
+    global_file = root / "step_feedback.json"
+    global_data = {}
+    if global_file.exists():
+        try:
+            global_data = json.loads(global_file.read_text()).get(scenario_id, {})
+        except Exception:
+            pass
+
+    return {**global_data, **client_data}  # client-specific overrides global
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
@@ -156,9 +170,10 @@ def _run_step(page: Page, step, output_dir: str, feedback: str = "") -> StepResu
                     if guidance:
                         print(f"  [coach] attempt {attempt+1}: {guidance.get('notes','')}")
                         _execute_guidance(page, guidance)
-                        # After coach action, take success screenshot and return
                         shot = os.path.join(output_dir, f"{step.step_id}.png")
                         page.screenshot(path=shot, full_page=False)
+                        # Save pattern to global knowledge base so future clients benefit
+                        save_successful_pattern(step.action, feedback, guidance)
                         return StepResult(
                             step_id=step.step_id,
                             passed=True,
