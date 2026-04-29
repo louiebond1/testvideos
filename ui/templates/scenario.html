@@ -104,6 +104,21 @@
               </button>
               {% endif %}
             </div>
+
+            {% set existing_feedback = step_feedback.get(step.step_id, '') %}
+            <div class="mt-3 flex items-start gap-2">
+              <textarea data-feedback-input
+                        placeholder="Tell the runner what went wrong here…"
+                        rows="2"
+                        class="flex-1 text-xs font-mono text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-400 transition">{{ existing_feedback }}</textarea>
+              <button data-save-feedback
+                      class="px-3 py-2 text-xs font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-lg transition flex-shrink-0">
+                Save
+              </button>
+            </div>
+            {% if existing_feedback %}
+            <p class="mt-1 text-xs text-violet-600 font-medium">✓ Feedback saved — runner will use this on next run</p>
+            {% endif %}
           </div>
         </div>
       </div>
@@ -141,21 +156,35 @@
 
   document.querySelectorAll('[data-step]').forEach(card => {
     const stepId = card.dataset.step;
+
     card.querySelectorAll('.status-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.preventDefault();
-        const status = btn.dataset.set;
         const fd = new FormData();
         fd.append('scenario_id', SCENARIO_ID);
         fd.append('step_id', stepId);
-        fd.append('status', status);
+        fd.append('status', btn.dataset.set);
         const res = await fetch('/api/step-status', { method: 'POST', body: fd });
-        if (res.ok) {
-          // Reload to re-render with new status colours
-          window.location.reload();
-        }
+        if (res.ok) window.location.reload();
       });
     });
+
+    const feedbackInput = card.querySelector('[data-feedback-input]');
+    const saveBtn = card.querySelector('[data-save-feedback]');
+    if (saveBtn && feedbackInput) {
+      saveBtn.addEventListener('click', async () => {
+        const fd = new FormData();
+        fd.append('scenario_id', SCENARIO_ID);
+        fd.append('step_id', stepId);
+        fd.append('feedback', feedbackInput.value);
+        const res = await fetch('/api/step-feedback', { method: 'POST', body: fd });
+        if (res.ok) {
+          saveBtn.textContent = 'Saved ✓';
+          saveBtn.classList.replace('bg-violet-600', 'bg-emerald-600');
+          setTimeout(() => window.location.reload(), 800);
+        }
+      });
+    }
   });
 </script>
   </div>

@@ -30,6 +30,20 @@ _ACTIVE_RUNS: dict[str, dict] = {}
 
 
 VALID_STATUSES = {"pass", "fail", "blocked", "not_tested"}
+FEEDBACK_FILE = STORAGE_DIR / "step_feedback.json"
+
+
+def _load_feedback() -> dict:
+    if FEEDBACK_FILE.exists():
+        try:
+            return json.loads(FEEDBACK_FILE.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_feedback(data: dict) -> None:
+    FEEDBACK_FILE.write_text(json.dumps(data, indent=2))
 
 
 def _load_statuses() -> dict:
@@ -182,6 +196,8 @@ def scenario_detail(request: Request, scenario_id: str):
     statuses = _load_statuses().get(scenario_id, {})
     step_statuses = {step.step_id: statuses.get(step.step_id, "not_tested") for step in scenario.steps}
 
+    feedback = _load_feedback().get(scenario_id, {})
+
     return templates.TemplateResponse(
         request=request,
         name="scenario.html",
@@ -191,6 +207,7 @@ def scenario_detail(request: Request, scenario_id: str):
             "run": latest_run,
             "stats": _stats(),
             "step_statuses": step_statuses,
+            "step_feedback": feedback,
         },
     )
 
@@ -230,6 +247,17 @@ def trigger_run(scenario_id: str):
 @app.get("/api/run/{scenario_id}/status")
 def run_status(scenario_id: str):
     return JSONResponse(_ACTIVE_RUNS.get(scenario_id, {"status": "idle"}))
+
+
+@app.post("/api/step-feedback")
+def set_step_feedback(scenario_id: str = Form(...), step_id: str = Form(...), feedback: str = Form(...)):
+    data = _load_feedback()
+    if feedback.strip():
+        data.setdefault(scenario_id, {})[step_id] = feedback.strip()
+    else:
+        data.get(scenario_id, {}).pop(step_id, None)
+    _save_feedback(data)
+    return JSONResponse({"ok": True})
 
 
 @app.post("/api/step-status")

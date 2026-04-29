@@ -12,6 +12,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 from playwright.sync_api import sync_playwright, Page
 
 from models.dataclasses import TestScenario, StepResult, ScenarioResult
+from engine.coach import get_step_guidance
 
 
 _DEFAULT_SF_URL = "https://hcm-eu10-preview.hr.cloud.sap/login?company=veritasp01T2"
@@ -55,10 +56,15 @@ def run_scenario(
             _login(page, sf_url, username, password)
             print("  [login] logged in successfully")
 
+            feedback_data = _load_feedback(scenario.scenario_id)
+
             for i, step in enumerate(steps, 1):
                 print(f"\n  [step {i}/{len(steps)}] {step.step_id}")
                 print(f"           {step.action[:120]}")
-                step_result = _run_step(page, step, str(runs_dir))
+                step_feedback = feedback_data.get(step.step_id, "")
+                if step_feedback:
+                    print(f"  [feedback] {step_feedback[:120]}")
+                step_result = _run_step(page, step, str(runs_dir), feedback=step_feedback)
                 result.steps.append(step_result)
 
                 status = "PASS" if step_result.passed else "FAIL"
@@ -91,6 +97,21 @@ def run_scenario(
     return result
 
 
+# ── Feedback loader ───────────────────────────────────────────────────────────
+
+def _load_feedback(scenario_id: str) -> dict:
+    """Load stored human feedback for each step of a scenario."""
+    feedback_file = Path(__file__).resolve().parent.parent / "storage" / "step_feedback.json"
+    if not feedback_file.exists():
+        return {}
+    try:
+        import json
+        data = json.loads(feedback_file.read_text())
+        return data.get(scenario_id, {})
+    except Exception:
+        return {}
+
+
 # ── Login ─────────────────────────────────────────────────────────────────────
 
 def _login(page: Page, url: str, username: str, password: str) -> None:
@@ -115,31 +136,84 @@ def _login(page: Page, url: str, username: str, password: str) -> None:
 
 # ── Step executor ─────────────────────────────────────────────────────────────
 
-def _run_step(page: Page, step, output_dir: str) -> StepResult:
+def _run_step(page: Page, step, output_dir: str, feedback: str = "") -> StepResult:
     t0 = time.time()
-    try:
-        _dispatch(page, step)
-        shot = os.path.join(output_dir, f"{step.step_id}.png")
-        page.screenshot(path=shot, full_page=False)
-        return StepResult(
-            step_id=step.step_id,
-            passed=True,
-            duration_s=round(time.time() - t0, 2),
-            screenshot_path=shot,
-        )
-    except Exception as exc:
-        shot = os.path.join(output_dir, f"{step.step_id}_fail.png")
+    last_exc = None
+
+    for attempt in range(3):
         try:
+            if attempt > 0:
+                page.wait_for_timeout(2000)
+                # On retry, take a screenshot and ask the coach what to do
+                shot_pre = os.path.join(output_dir, f"{step.step_id}_retry{attempt}.png")
+                try:
+                    page.screenshot(path=shot_pre, full_page=False)
+                except Exception:
+                    shot_pre = ""
+
+                if feedback and shot_pre:
+                    guidance = get_step_guidance(shot_pre, step.action, step.expected_result, feedback)
+                    if guidance:
+                        print(f"  [coach] attempt {attempt+1}: {guidance.get('notes','')}")
+                        _execute_guidance(page, guidance)
+                        # After coach action, take success screenshot and return
+                        shot = os.path.join(output_dir, f"{step.step_id}.png")
+                        page.screenshot(path=shot, full_page=False)
+                        return StepResult(
+                            step_id=step.step_id,
+                            passed=True,
+                            duration_s=round(time.time() - t0, 2),
+                            screenshot_path=shot,
+                        )
+
+            _dispatch(page, step)
+            shot = os.path.join(output_dir, f"{step.step_id}.png")
             page.screenshot(path=shot, full_page=False)
-        except Exception:
-            shot = ""
-        return StepResult(
-            step_id=step.step_id,
-            passed=False,
-            error_message=str(exc),
-            duration_s=round(time.time() - t0, 2),
-            screenshot_path=shot,
-        )
+            return StepResult(
+                step_id=step.step_id,
+                passed=True,
+                duration_s=round(time.time() - t0, 2),
+                screenshot_path=shot,
+            )
+
+        except Exception as exc:
+            last_exc = exc
+            print(f"  [retry {attempt+1}/3] {step.step_id}: {str(exc)[:120]}")
+
+    shot = os.path.join(output_dir, f"{step.step_id}_fail.png")
+    try:
+        page.screenshot(path=shot, full_page=False)
+    except Exception:
+        shot = ""
+    return StepResult(
+        step_id=step.step_id,
+        passed=False,
+        error_message=str(last_exc),
+        duration_s=round(time.time() - t0, 2),
+        screenshot_path=shot,
+    )
+
+
+def _execute_guidance(page: Page, guidance: dict) -> None:
+    """Execute a structured action returned by the coach."""
+    approach = guidance.get("approach", "wait_and_retry")
+    wait_ms = guidance.get("wait_before_ms", 500)
+    if wait_ms:
+        page.wait_for_timeout(wait_ms)
+
+    if approach == "coordinate_click":
+        page.mouse.click(guidance["x"], guidance["y"])
+        page.wait_for_load_state("networkidle", timeout=20_000)
+    elif approach == "text_click":
+        exact = guidance.get("exact", False)
+        page.get_by_text(guidance["text"], exact=exact).first.click(timeout=8_000)
+        page.wait_for_load_state("networkidle", timeout=20_000)
+    elif approach == "selector_click":
+        page.locator(guidance["selector"]).first.click(timeout=8_000)
+        page.wait_for_load_state("networkidle", timeout=20_000)
+    elif approach == "wait_and_retry":
+        page.wait_for_timeout(guidance.get("wait_ms", 2000))
+    # "skip" — do nothing
 
 
 # ── Action dispatcher ─────────────────────────────────────────────────────────
