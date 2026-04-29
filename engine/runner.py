@@ -170,20 +170,13 @@ def _run_step(page: Page, step, output_dir: str, feedback: str = "") -> StepResu
                     if guidance:
                         print(f"  [coach] attempt {attempt+1}: {guidance.get('notes','')}")
                         _execute_guidance(page, guidance)
-                        shot = os.path.join(output_dir, f"{step.step_id}.png")
-                        page.screenshot(path=shot, full_page=False)
-                        # Save pattern to global knowledge base so future clients benefit
-                        save_successful_pattern(step.action, feedback, guidance)
-                        return StepResult(
-                            step_id=step.step_id,
-                            passed=True,
-                            duration_s=round(time.time() - t0, 2),
-                            screenshot_path=shot,
-                        )
+                        # Fall through to _dispatch to verify the action actually worked
 
             _dispatch(page, step)
             shot = os.path.join(output_dir, f"{step.step_id}.png")
             page.screenshot(path=shot, full_page=False)
+            if attempt > 0 and feedback:
+                save_successful_pattern(step.action, feedback, {"approach": "coach_guided", "notes": f"succeeded on attempt {attempt+1}"})
             return StepResult(
                 step_id=step.step_id,
                 passed=True,

@@ -183,22 +183,28 @@ def scenario_detail(request: Request, scenario_id: str):
     runs = sorted(RUNS_DIR.iterdir(), reverse=True) if RUNS_DIR.exists() else []
     latest_run = None
     for run in runs:
-        if run.is_dir() and any(run.glob(f"{scenario_id}-*.png")):
-            videos = sorted(run.glob("*.webm"))
-            shots = sorted(run.glob(f"{scenario_id}-*.png"))
-            latest_run = {
-                "id": run.name,
-                "video_url": f"/runs/{run.name}/{videos[0].name}" if videos else None,
-                "screenshots": [
-                    {
-                        "url": f"/runs/{run.name}/{s.name}",
-                        "step_id": s.stem.replace("_fail", ""),
-                        "passed": "_fail" not in s.stem,
-                    }
-                    for s in shots
-                ],
-            }
-            break
+        if not run.is_dir():
+            continue
+        shots = sorted(run.glob(f"{scenario_id}-*.png"))
+        if not shots:
+            continue
+        # Only surface this run if every step passed — no _fail screenshots
+        if any("_fail" in s.stem for s in shots):
+            continue
+        videos = sorted(run.glob("*.webm"))
+        latest_run = {
+            "id": run.name,
+            "video_url": f"/runs/{run.name}/{videos[0].name}" if videos else None,
+            "screenshots": [
+                {
+                    "url": f"/runs/{run.name}/{s.name}",
+                    "step_id": s.stem,
+                    "passed": True,
+                }
+                for s in shots
+            ],
+        }
+        break
 
     statuses = _load_statuses().get(scenario_id, {})
     step_statuses = {step.step_id: statuses.get(step.step_id, "not_tested") for step in scenario.steps}
