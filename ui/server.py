@@ -266,6 +266,19 @@ def run_status(scenario_id: str):
     return JSONResponse(_ACTIVE_RUNS.get(scenario_id, {"status": "idle"}))
 
 
+def _git_push_feedback():
+    """Commit and push feedback file to GitHub in the background."""
+    import subprocess
+    try:
+        feedback_path = str(FEEDBACK_FILE.relative_to(ROOT))
+        subprocess.run(["git", "-C", str(ROOT), "add", feedback_path], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(ROOT), "commit", "-m", "Update step feedback [auto]"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(ROOT), "push", "origin", "master"], check=True, capture_output=True)
+        print("[feedback] pushed to GitHub — Railway redeploying")
+    except Exception as exc:
+        print(f"[feedback] git push skipped: {exc}")
+
+
 @app.post("/api/step-feedback")
 def set_step_feedback(scenario_id: str = Form(...), step_id: str = Form(...), feedback: str = Form(...)):
     data = _load_feedback()
@@ -274,6 +287,7 @@ def set_step_feedback(scenario_id: str = Form(...), step_id: str = Form(...), fe
     else:
         data.get(scenario_id, {}).pop(step_id, None)
     _save_feedback(data)
+    threading.Thread(target=_git_push_feedback, daemon=True).start()
     return JSONResponse({"ok": True})
 
 
