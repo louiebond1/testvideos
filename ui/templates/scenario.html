@@ -75,8 +75,19 @@
         <!-- Feedback input — shown when a step is selected -->
         <div id="feedback-box" class="hidden mt-4 border-t border-slate-100 pt-4">
           <p class="text-xs font-medium text-slate-600 mb-2">Feedback for <span id="feedback-step-label" class="font-mono text-violet-600"></span></p>
-          <textarea id="feedback-text" rows="4"
-                    placeholder="Plain text: describe what went wrong (AI interprets it).&#10;&#10;OR use direct commands (executes exactly, no AI):&#10;SHADOW_CLICK: Recruiting&#10;CLICK: Proxy Now&#10;CLICK_XY: 500, 350&#10;TYPE: Alex Brackley&#10;PRESS: Enter&#10;WAIT: 2000"
+
+          <!-- Click-to-train screenshot -->
+          <div id="train-area" class="hidden mb-3">
+            <p class="text-[10px] text-slate-400 mb-1">Click exactly where it should press — coordinates are added automatically</p>
+            <div class="relative rounded-lg overflow-hidden border border-slate-200 cursor-crosshair" id="train-img-wrap">
+              <img id="train-img" class="w-full block" />
+              <div id="train-dots"></div>
+            </div>
+            <button onclick="clearDots()" class="mt-1 text-[10px] text-slate-400 hover:text-slate-600">Clear clicks</button>
+          </div>
+
+          <textarea id="feedback-text" rows="3"
+                    placeholder="Click the screenshot above to add click points, or type commands:&#10;SHADOW_CLICK: Recruiting&#10;CLICK_XY: 500, 350&#10;TYPE: Alex Brackley&#10;PRESS: Enter&#10;WAIT: 1000"
                     class="w-full text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-400 transition"></textarea>
           <button onclick="saveAndRetry()"
                   id="retry-btn"
@@ -142,8 +153,49 @@
 <script>
   const SCENARIO_ID = "{{ scenario.scenario_id }}";
   const EXISTING_FEEDBACK = {{ step_feedback | tojson }};
+  const STEP_SCREENSHOTS = {{ step_screenshots | tojson }};
   let _selectedStep = null;
   let _pollTimer = null;
+
+  // ── Click-to-train screenshot ────────────────────────────────────────────────
+  const _trainImg = document.getElementById('train-img');
+  const _trainWrap = document.getElementById('train-img-wrap');
+  const _trainDots = document.getElementById('train-dots');
+
+  _trainWrap.addEventListener('click', (e) => {
+    const rect = _trainImg.getBoundingClientRect();
+    // Screenshots are always 1280×720
+    const x = Math.round((e.clientX - rect.left) * (1280 / rect.width));
+    const y = Math.round((e.clientY - rect.top)  * (720  / rect.height));
+
+    // Append command to textarea
+    const ta = document.getElementById('feedback-text');
+    ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') + `CLICK_XY: ${x}, ${y}`;
+
+    // Draw a red dot at the clicked position
+    const dot = document.createElement('div');
+    dot.className = 'absolute pointer-events-none';
+    dot.style.cssText = `
+      left: ${(e.clientX - rect.left) / rect.width * 100}%;
+      top:  ${(e.clientY - rect.top)  / rect.height * 100}%;
+      transform: translate(-50%,-50%);
+      width: 18px; height: 18px;
+      background: #ef4444; border: 2px solid white;
+      border-radius: 50%; box-shadow: 0 0 0 2px #ef4444;
+    `;
+    const label = document.createElement('span');
+    label.className = 'absolute left-5 top-0 text-[10px] font-mono text-white bg-red-500 px-1 rounded whitespace-nowrap';
+    label.textContent = `${x}, ${y}`;
+    dot.appendChild(label);
+    _trainDots.appendChild(dot);
+  });
+
+  function clearDots() {
+    _trainDots.innerHTML = '';
+    // Strip CLICK_XY lines from textarea
+    const ta = document.getElementById('feedback-text');
+    ta.value = ta.value.split('\n').filter(l => !l.trim().startsWith('CLICK_XY')).join('\n').trim();
+  }
 
   // ── Run button ──────────────────────────────────────────────────────────────
   async function startRun() {
@@ -183,9 +235,21 @@
     document.getElementById('feedback-step-label').textContent = stepId;
     document.getElementById('feedback-text').value = EXISTING_FEEDBACK[stepId] || '';
     document.getElementById('send-status').classList.add('hidden');
-    document.getElementById('send-btn').textContent = 'Send feedback';
-    document.getElementById('send-btn').classList.remove('bg-emerald-600');
-    document.getElementById('send-btn').classList.add('bg-violet-600');
+    document.getElementById('retry-status').classList.add('hidden');
+    document.getElementById('retry-btn').disabled = false;
+    document.getElementById('retry-btn').textContent = 'Save & Retry now';
+    document.getElementById('send-btn').textContent = 'Save note only';
+
+    // Show click-to-train screenshot if we have one for this step
+    const shotUrl = STEP_SCREENSHOTS[stepId];
+    const trainArea = document.getElementById('train-area');
+    _trainDots.innerHTML = '';
+    if (shotUrl) {
+      _trainImg.src = shotUrl;
+      trainArea.classList.remove('hidden');
+    } else {
+      trainArea.classList.add('hidden');
+    }
   }
 
   async function _saveFeedback() {

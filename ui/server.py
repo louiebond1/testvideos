@@ -180,8 +180,22 @@ def scenario_detail(request: Request, scenario_id: str):
     if not scenario:
         return HTMLResponse("Scenario not found", status_code=404)
 
+    import re as _re
     runs = sorted(RUNS_DIR.iterdir(), reverse=True) if RUNS_DIR.exists() else []
     latest_run = None
+
+    # Collect the most recent screenshot per step across ALL runs (for click-to-train).
+    # Prefer _fail shots — they show exactly where it broke.
+    step_screenshots: dict[str, str] = {}
+    for run in runs:
+        if not run.is_dir():
+            continue
+        for shot in sorted(run.glob(f"{scenario_id}-*.png")):
+            base = _re.sub(r'_(fail|retry\d*)$', '', shot.stem)
+            url = f"/runs/{run.name}/{shot.name}"
+            if base not in step_screenshots or "_fail" in shot.stem:
+                step_screenshots[base] = url
+
     for run in runs:
         if not run.is_dir():
             continue
@@ -221,6 +235,7 @@ def scenario_detail(request: Request, scenario_id: str):
             "stats": _stats(),
             "step_statuses": step_statuses,
             "step_feedback": feedback,
+            "step_screenshots": step_screenshots,
             "client_id": CLIENT_ID,
         },
     )
