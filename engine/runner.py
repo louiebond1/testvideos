@@ -238,17 +238,19 @@ def _dispatch(page: Page, step) -> None:
             page.goto(url, wait_until="networkidle", timeout=30_000)
             return
 
+    # ── Recruiting shortcut — catch any action that mentions navigating to Recruiting ─
+    if "recruit" in action and any(k in action for k in ("navigate", "module", "picker", "go to", "open")):
+        _module_picker_nav(page, ["Recruiting"])
+        return
+
     # ── Module picker navigation (e.g. "Company Info → Position Org Chart") ───
     if "module picker" in action or (
         "navigate" in action and any(sep in step.action for sep in ("→", "->"))
     ):
         dest = _nav_destination(step.action)
-        _module_picker_nav(page, dest)
-        return
-
-    if "recruiting" in action and ("module picker" in action or "navigate to recruiting" in action):
-        _module_picker_nav(page, ["Recruiting"])
-        return
+        if dest:
+            _module_picker_nav(page, dest)
+            return
 
     # ── Search the Position Org Chart ─────────────────────────────────────────
     if "search for" in action and ("position" in action or "parent" in action):
@@ -293,50 +295,72 @@ _MENU_ORDER = [
 
 
 def _module_picker_nav(page: Page, path: list[str]) -> None:
-    """Open the SF module picker and navigate to the target module.
+    """Open the SF module picker and navigate to the target module."""
+    if not path:
+        raise RuntimeError("Empty navigation path passed to _module_picker_nav")
 
-    Tries three approaches in order:
-    1. Playwright text locator (pierces shadow DOM)
-    2. Coordinate-based click calculated from Home button position
-    3. Vision-based click via Claude coach (screenshot → coordinates)
-    """
     btn_loc = page.locator("button:has-text('Home')").first
     btn = btn_loc.bounding_box()
     if not btn:
         raise RuntimeError("Module picker Home button not found")
 
     btn_loc.click(timeout=10_000)
-    page.wait_for_timeout(2000)  # wait for dropdown animation
+    page.wait_for_timeout(1500)  # wait for dropdown animation
 
     first_item = path[0]
 
-    # ── Approach 1: Playwright text locator (works if shadow DOM is pierced) ──
+    # ── Approach 1: Playwright text locator (pierces shadow DOM) ─────────────
+    for exact in (True, False):
+        try:
+            page.get_by_text(first_item, exact=exact).first.click(timeout=3_000)
+            page.wait_for_load_state("networkidle", timeout=25_000)
+            _verify_module_nav(page, first_item)
+            _module_picker_subpath(page, path[1:])
+            return
+        except Exception:
+            pass
+
+    # ── Approach 2: Keyboard navigation (most reliable for shadow DOM lists) ──
     try:
-        page.get_by_text(first_item, exact=True).first.click(timeout=3_000)
-        page.wait_for_load_state("networkidle", timeout=25_000)
-        _module_picker_subpath(page, path[1:])
-        return
+        if first_item in _MENU_ORDER:
+            idx = _MENU_ORDER.index(first_item)
+            # Tab into the list then arrow-down to the right item
+            for _ in range(idx + 1):
+                page.keyboard.press("ArrowDown")
+                page.wait_for_timeout(80)
+            page.keyboard.press("Enter")
+            page.wait_for_load_state("networkidle", timeout=25_000)
+            _verify_module_nav(page, first_item)
+            _module_picker_subpath(page, path[1:])
+            return
     except Exception:
         pass
 
-    # ── Approach 2: Coordinate-based click ────────────────────────────────────
+    # ── Approach 3: Coordinate click (26 px per row, anchored to menu top) ───
     try:
         if first_item not in _MENU_ORDER:
             raise RuntimeError(f"'{first_item}' not in _MENU_ORDER")
         idx = _MENU_ORDER.index(first_item)
-        item_h = 30
-        menu_x = btn["x"] + 80
-        menu_y = btn["y"] + btn["height"] + 6 + (idx * item_h) + (item_h // 2)
+        item_h = 26
+        menu_x = btn["x"] + btn["width"] / 2
+        menu_top = btn["y"] + btn["height"] + 8
+        menu_y = menu_top + (idx * item_h) + (item_h // 2)
+        # If calculated y is off-screen, scroll the dropdown first
+        if menu_y > 700:
+            page.mouse.wheel(0, menu_y - 600)
+            page.wait_for_timeout(300)
+            menu_y = min(menu_y, 680)
         page.mouse.move(menu_x, menu_y)
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(200)
         page.mouse.click(menu_x, menu_y)
         page.wait_for_load_state("networkidle", timeout=25_000)
+        _verify_module_nav(page, first_item)
         _module_picker_subpath(page, path[1:])
         return
     except Exception:
         pass
 
-    # ── Approach 3: Vision-based — screenshot the open menu, ask Claude ───────
+    # ── Approach 4: Vision-based — screenshot the open menu, ask Claude ──────
     import tempfile
     shot = tempfile.mktemp(suffix=".png")
     page.screenshot(path=shot, full_page=False)
@@ -353,7 +377,22 @@ def _module_picker_nav(page: Page, path: list[str]) -> None:
         _module_picker_subpath(page, path[1:])
         return
 
-    raise RuntimeError(f"All three approaches failed to click '{first_item}' in module picker")
+    raise RuntimeError(f"All four approaches failed to click '{first_item}' in module picker")
+
+
+def _verify_module_nav(page: Page, module_name: str) -> None:
+    """Raise if the page doesn't look like it navigated to the expected module."""
+    slug = module_name.lower().replace(" ", "")
+    try:
+        page.wait_for_url(f"**{slug}**", timeout=4_000)
+    except Exception:
+        # URL check failed — do a lenient content check before giving up
+        try:
+            page.wait_for_selector(
+                f"text={module_name}", timeout=3_000
+            )
+        except Exception:
+            raise RuntimeError(f"Navigation to '{module_name}' could not be verified")
 
 
 def _module_picker_subpath(page: Page, remaining: list[str]) -> None:
@@ -368,11 +407,17 @@ def _nav_destination(action_text: str) -> list[str]:
     "From the Module Picker, navigate to Company Info → Position Org Chart"
     → ["Company Info", "Position Org Chart"]
     """
-    # Grab everything after 'navigate to' or 'navigate'
-    m = re.search(r"navigate to (.+?)(?:\s*$)", action_text, re.IGNORECASE)
-    raw = m.group(1) if m else action_text
+    # Stop extraction before filler words like "using", "via", "through", "from"
+    m = re.search(
+        r"navigate to (.+?)(?:\s+(?:using|via|through|from|in|with)\b|\s*$)",
+        action_text,
+        re.IGNORECASE,
+    )
+    raw = m.group(1).strip() if m else action_text
     parts = [p.strip() for p in re.split(r"[→\->/]", raw)]
-    return [p for p in parts if p and "module picker" not in p.lower()]
+    # Strip filler words that sometimes leak in; keep substantive module names
+    stop_words = {"module picker", "the module picker", "module"}
+    return [p for p in parts if p and p.lower() not in stop_words]
 
 
 # ── Position Org Chart helpers ────────────────────────────────────────────────
