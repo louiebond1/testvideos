@@ -78,12 +78,18 @@
           <textarea id="feedback-text" rows="4"
                     placeholder="e.g. The menu opened but you didn't click Recruiting — look for it in the dropdown list and click it directly."
                     class="w-full text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-400 transition"></textarea>
+          <button onclick="saveAndRetry()"
+                  id="retry-btn"
+                  class="mt-2 w-full py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
+            Save & Retry now
+          </button>
           <button onclick="sendFeedback()"
                   id="send-btn"
-                  class="mt-2 w-full py-2 text-xs font-semibold text-white bg-violet-600 hover:bg-violet-700 rounded-lg transition">
-            Send feedback
+                  class="mt-1 w-full py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg transition">
+            Save note only
           </button>
-          <p id="send-status" class="hidden mt-2 text-xs text-center text-emerald-600 font-medium">✓ Saved — pushing to GitHub now</p>
+          <p id="send-status" class="hidden mt-2 text-xs text-center text-emerald-600 font-medium">✓ Saved</p>
+          <p id="retry-status" class="hidden mt-2 text-xs text-center text-slate-500 font-medium"></p>
         </div>
       </div>
 
@@ -182,20 +188,66 @@
     document.getElementById('send-btn').classList.add('bg-violet-600');
   }
 
-  async function sendFeedback() {
-    if (!_selectedStep) return;
+  async function _saveFeedback() {
+    if (!_selectedStep) return false;
     const text = document.getElementById('feedback-text').value;
     const fd = new FormData();
     fd.append('scenario_id', SCENARIO_ID);
     fd.append('step_id', _selectedStep);
     fd.append('feedback', text);
     const res = await fetch('/api/step-feedback', { method: 'POST', body: fd });
-    if (res.ok) {
-      const btn = document.getElementById('send-btn');
-      btn.textContent = 'Sent ✓';
-      btn.classList.replace('bg-violet-600', 'bg-emerald-600');
+    return res.ok;
+  }
+
+  async function sendFeedback() {
+    const ok = await _saveFeedback();
+    if (ok) {
+      document.getElementById('send-btn').textContent = 'Saved ✓';
       document.getElementById('send-status').classList.remove('hidden');
     }
+  }
+
+  async function saveAndRetry() {
+    const retryBtn = document.getElementById('retry-btn');
+    const statusEl = document.getElementById('retry-status');
+    retryBtn.disabled = true;
+    retryBtn.textContent = 'Saving…';
+    statusEl.classList.add('hidden');
+
+    const saved = await _saveFeedback();
+    if (!saved) {
+      retryBtn.textContent = 'Save failed';
+      retryBtn.disabled = false;
+      return;
+    }
+
+    retryBtn.textContent = 'Starting run…';
+    const runRes = await fetch(`/api/run/${SCENARIO_ID}`, { method: 'POST' });
+    if (!runRes.ok) {
+      retryBtn.textContent = 'Could not start — try Run scenario button';
+      retryBtn.disabled = false;
+      return;
+    }
+
+    retryBtn.textContent = 'Running…';
+    statusEl.textContent = 'Running with your feedback — page will reload when done';
+    statusEl.classList.remove('hidden');
+
+    if (_pollTimer) clearInterval(_pollTimer);
+    _pollTimer = setInterval(async () => {
+      const data = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
+      if (data.status === 'done') {
+        clearInterval(_pollTimer);
+        window.location.reload();
+      } else if (data.status === 'error') {
+        clearInterval(_pollTimer);
+        retryBtn.textContent = 'Run errored';
+        retryBtn.disabled = false;
+        statusEl.textContent = data.error || 'Unknown error';
+        const errBox = document.getElementById('run-error');
+        if (errBox) { errBox.textContent = data.error || 'Unknown error'; errBox.classList.remove('hidden'); }
+      }
+    }, 3000);
   }
 
   // ── Step status buttons ─────────────────────────────────────────────────────
