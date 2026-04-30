@@ -339,6 +339,16 @@ def run_status(scenario_id: str):
     return JSONResponse(_ACTIVE_RUNS.get(scenario_id, {"status": "idle"}))
 
 
+@app.post("/api/run/{scenario_id}/cancel")
+def cancel_run(scenario_id: str):
+    """Force-reset a stuck or paused run."""
+    if scenario_id in _PAUSE_EVENTS:
+        _PAUSE_FIX[scenario_id] = None
+        _PAUSE_EVENTS[scenario_id].set()
+    _ACTIVE_RUNS.pop(scenario_id, None)
+    return JSONResponse({"ok": True})
+
+
 @app.post("/api/run/{scenario_id}/resume")
 async def resume_run(scenario_id: str, request: Request):
     body = await request.json()

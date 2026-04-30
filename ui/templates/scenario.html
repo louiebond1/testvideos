@@ -11,6 +11,7 @@
     <span class="text-slate-900 font-medium font-mono text-xs">{{ scenario.scenario_id }}</span>
   </nav>
   <div class="flex items-center gap-3">
+    <button id="cancel-btn" onclick="cancelRun()" class="hidden text-xs text-slate-400 hover:text-rose-500 underline transition">Reset</button>
     <button id="run-btn" onclick="startRun()"
             class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
       <svg id="run-icon" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -189,32 +190,48 @@
   let _selectedStep = null;
   let _pollTimer = null;
 
+  function _setRunning() {
+    document.getElementById('run-btn').disabled = true;
+    document.getElementById('run-label').textContent = 'Running…';
+    document.getElementById('cancel-btn').classList.remove('hidden');
+  }
+  function _setPaused(data) {
+    document.getElementById('run-btn').disabled = true;
+    document.getElementById('run-label').textContent = 'Waiting for your fix…';
+    document.getElementById('cancel-btn').classList.remove('hidden');
+    _showPauseOverlay(data);
+  }
+  function _setIdle() {
+    document.getElementById('run-btn').disabled = false;
+    document.getElementById('run-label').textContent = 'Run scenario';
+    document.getElementById('cancel-btn').classList.add('hidden');
+    _hideFailurePanel();
+  }
+
+  async function cancelRun() {
+    await fetch(`/api/run/${SCENARIO_ID}/cancel`, { method: 'POST' });
+    if (_pollTimer) clearInterval(_pollTimer);
+    _setIdle();
+  }
+
   // On load: check if a run is already paused or running and resume polling
   (async function _checkOnLoad() {
     const data = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
     if (data.status === 'paused') {
-      const btn = document.getElementById('run-btn');
-      const label = document.getElementById('run-label');
-      btn.disabled = true;
-      label.textContent = 'Waiting for your fix…';
-      _showPauseOverlay(data);
-      // Keep polling so we detect when it resumes/finishes
+      _setPaused(data);
       _pollTimer = setInterval(async () => {
         const d = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
         if (d.status === 'done') { clearInterval(_pollTimer); window.location.reload(); }
-        else if (d.status === 'running' && _pauseOverlay) {
-          document.body.removeChild(_pauseOverlay); _pauseOverlay = null;
-        }
+        else if (d.status === 'idle') { clearInterval(_pollTimer); _setIdle(); }
+        else if (d.status === 'paused') { _showPauseOverlay(d); }
       }, 3000);
     } else if (data.status === 'running') {
-      const btn = document.getElementById('run-btn');
-      const label = document.getElementById('run-label');
-      btn.disabled = true;
-      label.textContent = 'Running…';
+      _setRunning();
       _pollTimer = setInterval(async () => {
         const d = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
         if (d.status === 'done') { clearInterval(_pollTimer); window.location.reload(); }
-        else if (d.status === 'paused') { label.textContent = 'Waiting for your fix…'; _showPauseOverlay(d); }
+        else if (d.status === 'paused') { _setPaused(d); }
+        else if (d.status === 'idle') { clearInterval(_pollTimer); _setIdle(); }
       }, 3000);
     }
   })();
