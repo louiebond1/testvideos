@@ -401,6 +401,40 @@ def run_steps(scenario_id: str):
     return JSONResponse({"steps": [], "status": "idle"})
 
 
+EXPECTED_OVERRIDES_FILE = STORAGE_DIR / "expected_overrides.json"
+
+
+def _load_overrides() -> dict:
+    if EXPECTED_OVERRIDES_FILE.exists():
+        try:
+            return json.loads(EXPECTED_OVERRIDES_FILE.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_overrides(data: dict) -> None:
+    EXPECTED_OVERRIDES_FILE.write_text(json.dumps(data, indent=2))
+
+
+@app.get("/api/expected-override/{scenario_id}/{step_id}")
+def get_expected_override(scenario_id: str, step_id: str):
+    return JSONResponse({"override": _load_overrides().get(scenario_id, {}).get(step_id, "")})
+
+
+@app.post("/api/expected-override")
+def set_expected_override(scenario_id: str = Form(...), step_id: str = Form(...), override: str = Form(...)):
+    data = _load_overrides()
+    if override.strip():
+        data.setdefault(scenario_id, {})[step_id] = override.strip()
+    else:
+        data.get(scenario_id, {}).pop(step_id, None)
+        if scenario_id in data and not data[scenario_id]:
+            data.pop(scenario_id)
+    _save_overrides(data)
+    return JSONResponse({"ok": True})
+
+
 @app.post("/api/interpret-fix/{scenario_id}")
 async def interpret_fix(scenario_id: str, request: Request):
     """Use Claude Vision to turn a plain-English description into runner commands."""

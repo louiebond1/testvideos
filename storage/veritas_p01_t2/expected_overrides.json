@@ -1,0 +1,5 @@
+{
+  "RCM-RC-101": {
+    "RCM-RC-101-04": "The 'Copy Position' confirmation dialog is open. It shows the body text about copies inheriting the parent's attributes, a 'Number of positions to copy' field with value 1, and a 'Set To Be Recruited' checkbox that is ticked. OK and Cancel buttons are visible at the bottom. (SF auto-inherits Title/Department/Location/Cost Center from the source position — there are no manual input fields.)"
+  }
+}

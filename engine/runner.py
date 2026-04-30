@@ -123,6 +123,7 @@ def run_scenario(
             print("  [login] logged in successfully")
 
             feedback_data = _load_feedback(scenario.scenario_id)
+            expected_overrides = _load_expected_overrides(scenario.scenario_id)
 
             for i, step in enumerate(steps, 1):
                 print(f"\n  [step {i}/{len(steps)}] {step.step_id}")
@@ -153,10 +154,13 @@ def run_scenario(
                 if step_result.passed and step_result.screenshot_path:
                     page.wait_for_timeout(400)  # let page settle before verify shot
                     page.screenshot(path=step_result.screenshot_path, full_page=False)
+                    # Use override if present — for cases where the test script's
+                    # expected_result no longer matches the actual SF UI.
+                    expected = expected_overrides.get(step.step_id) or step.expected_result
                     ok, reason = _verify_step(
                         step_result.screenshot_path,
                         step.action,
-                        step.expected_result,
+                        expected,
                         step.test_data,
                     )
                     print(f"  [verify] {step.step_id}: {'PASS' if ok else 'FAIL'} — {reason}")
@@ -243,6 +247,28 @@ def run_scenario(
         result.s3_url = str(videos[0])
 
     return result
+
+
+# ── Expected result overrides ────────────────────────────────────────────────
+# Lets us redefine what the visual verifier should see for a given step,
+# without editing the official Excel workbook. Useful when the workbook
+# describes UI that no longer exists in the product (e.g. SF simplified the
+# Copy Position dialog from a full edit form to a confirmation dialog).
+
+def _load_expected_overrides(scenario_id: str) -> dict:
+    """Load step_id → expected_result override map for this scenario."""
+    import json
+    root = Path(__file__).resolve().parent.parent / "storage"
+    client_id = os.getenv("CLIENT_ID", "default")
+    f = root / client_id / "expected_overrides.json"
+    if not f.exists():
+        return {}
+    try:
+        data = json.loads(f.read_text())
+        return data.get(scenario_id, {}) or {}
+    except Exception as exc:
+        print(f"  [overrides] failed to load: {exc}")
+        return {}
 
 
 # ── Feedback loader ───────────────────────────────────────────────────────────
