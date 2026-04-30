@@ -488,13 +488,17 @@ async def resume_run(scenario_id: str, request: Request):
 
     _PAUSE_FIX[scenario_id] = {"commands": commands, "comment": comment}
 
-    # Optionally persist to step_feedback.json so it survives future runs
+    # Only save as step feedback if there was NO existing feedback for this step.
+    # If there WAS feedback and it still failed, the resume fix is a one-off correction —
+    # don't overwrite the stored sequence or future runs will lose the full command set.
     if save_feedback and commands:
         paused_step = _ACTIVE_RUNS.get(scenario_id, {}).get("paused_step")
         if paused_step:
             data = _load_feedback()
-            data.setdefault(scenario_id, {})[paused_step] = commands
-            _save_feedback(data)
+            existing = data.get(scenario_id, {}).get(paused_step, "")
+            if not existing:
+                data.setdefault(scenario_id, {})[paused_step] = commands
+                _save_feedback(data)
 
     _PAUSE_EVENTS[scenario_id].set()
     return JSONResponse({"ok": True})
