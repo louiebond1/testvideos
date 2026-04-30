@@ -39,7 +39,7 @@ _PAUSE_EVENTS: dict[str, threading.Event] = {}
 _PAUSE_FIX: dict[str, dict | None] = {}
 
 
-def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id: str):
+def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id: str, error_message: str = ""):
     """Called by runner when a step fails — pauses and waits for human fix."""
     evt = threading.Event()
     _PAUSE_EVENTS[scenario_id] = evt
@@ -49,6 +49,7 @@ def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id
         "status": "paused",
         "paused_step": step_id,
         "screenshot_url": shot_url,
+        "error_message": error_message,
     })
     print(f"  [pause] {scenario_id} paused on {step_id} — waiting up to 10 min for human fix")
     evt.wait(timeout=600)

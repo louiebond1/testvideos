@@ -147,6 +147,7 @@ def run_scenario(
                         step_id=step.step_id,
                         screenshot_path=step_result.screenshot_path,
                         run_id=run_id,
+                        error_message=step_result.error_message,
                     )
                     if fix:
                         commands = fix.get("commands", "")
