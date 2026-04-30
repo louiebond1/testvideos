@@ -15,6 +15,7 @@ from playwright.sync_api import sync_playwright, Page
 from models.dataclasses import TestScenario, StepResult, ScenarioResult
 from engine.coach import get_step_guidance, save_successful_pattern
 from engine.context_extractor import extract_from_text, substitute, step_produces
+from engine.visual_verifier import verify_step as _verify_step
 
 
 _DEFAULT_SF_URL = "https://hcm-eu10-preview.hr.cloud.sap/login?company=veritasp01T2"
@@ -104,6 +105,12 @@ def run_scenario(
             record_video_size={"width": 1280, "height": 720},
             viewport={"width": 1280, "height": 720},
         )
+        # Playwright trace — DOM + screenshots + network at every action.
+        # Drop trace.zip into trace.playwright.dev for frame-by-frame replay.
+        try:
+            context.tracing.start(screenshots=True, snapshots=True, sources=False)
+        except Exception as _exc:
+            print(f"  [trace] tracing.start failed: {_exc}")
         page = context.new_page()
 
         # Runtime context — values extracted from SF as steps complete
@@ -139,6 +146,31 @@ def run_scenario(
                     print(f"  [context] {run_context}")
 
                 step_result = _run_step(page, step, str(runs_dir), feedback=step_feedback)
+
+                # Visual verification — confirm the screenshot actually matches the
+                # expected result. Catches "fake passes" where commands ran but
+                # nothing meaningful happened in SF.
+                if step_result.passed and step_result.screenshot_path:
+                    page.wait_for_timeout(400)  # let page settle before verify shot
+                    page.screenshot(path=step_result.screenshot_path, full_page=False)
+                    ok, reason = _verify_step(
+                        step_result.screenshot_path,
+                        step.action,
+                        step.expected_result,
+                        step.test_data,
+                    )
+                    print(f"  [verify] {step.step_id}: {'PASS' if ok else 'FAIL'} — {reason}")
+                    if not ok:
+                        step_result.passed = False
+                        step_result.error_message = f"Visual check failed: {reason}"
+                        # Move screenshot to _fail.png so the failure UI picks it up
+                        old_path = step_result.screenshot_path
+                        new_path = old_path.replace(".png", "_fail.png") if not old_path.endswith("_fail.png") else old_path
+                        try:
+                            os.replace(old_path, new_path)
+                            step_result.screenshot_path = new_path
+                        except Exception:
+                            pass
 
                 # If failed and we have a pause callback — ask human for help
                 if not step_result.passed and pause_callback:
@@ -199,6 +231,10 @@ def run_scenario(
             print(f"  [runner error] {exc}")
         finally:
             result.ended_at = datetime.utcnow()
+            try:
+                context.tracing.stop(path=str(runs_dir / "trace.zip"))
+            except Exception as _exc:
+                print(f"  [trace] tracing.stop failed: {_exc}")
             context.close()
             browser.close()
 
@@ -342,7 +378,7 @@ def _run_direct_commands(page: Page, step, output_dir: str, feedback: str, t0: f
             current_cmd = f"{cmd}: {arg[:60]}"
 
             if cmd == "CLICK":
-                page.get_by_text(arg, exact=False).first.click(timeout=8_000)
+                _smart_click(page, arg)
             elif cmd == "SHADOW_CLICK":
                 if not _shadow_click(page, arg):
                     raise RuntimeError(f"SHADOW_CLICK: could not find '{arg}' in any shadow root")
@@ -393,6 +429,35 @@ def _run_direct_commands(page: Page, step, output_dir: str, feedback: str, t0: f
         return StepResult(step_id=step.step_id, passed=False,
                           error_message=err,
                           duration_s=round(time.time() - t0, 2), screenshot_path=shot)
+
+
+def _smart_click(page: Page, target: str) -> None:
+    """
+    Try multiple click strategies in order — first one that hits, wins.
+    Strategies: text → button-role → link-role → aria-label → shadow-text.
+    Each gets 2.5s rather than one 8s timeout, so total fail-time is similar
+    but we cover the cases where the same element is named differently in
+    the accessibility tree vs visible text.
+    """
+    strategies = [
+        ("text",       lambda: page.get_by_text(target, exact=False).first.click(timeout=2500)),
+        ("button",     lambda: page.get_by_role("button", name=target).first.click(timeout=2000)),
+        ("link",       lambda: page.get_by_role("link", name=target).first.click(timeout=2000)),
+        ("menuitem",   lambda: page.get_by_role("menuitem", name=target).first.click(timeout=2000)),
+        ("option",     lambda: page.get_by_role("option", name=target).first.click(timeout=2000)),
+        ("aria-label", lambda: page.locator(f'[aria-label="{target}"], [title="{target}"]').first.click(timeout=2000)),
+    ]
+    last_err = None
+    for name, fn in strategies:
+        try:
+            fn()
+            return
+        except Exception as exc:
+            last_err = f"{name}: {str(exc)[:60]}"
+    # Final fallback — search every shadow root
+    if _shadow_click(page, target, exact=False):
+        return
+    raise RuntimeError(f"CLICK '{target}' — no strategy matched (last: {last_err})")
 
 
 def _shadow_click(page: Page, text: str, exact: bool = True) -> bool:

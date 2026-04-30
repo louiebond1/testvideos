@@ -252,9 +252,11 @@ def scenario_detail(request: Request, scenario_id: str):
         if any("_fail" in s.stem for s in shots):
             continue
         videos = sorted(run.glob("*.webm"))
+        trace = run / "trace.zip"
         latest_run = {
             "id": run.name,
             "video_url": f"/runs/{run.name}/{videos[0].name}" if videos else None,
+            "trace_url": f"/runs/{run.name}/trace.zip" if trace.exists() else None,
             "screenshots": [
                 {
                     "url": f"/runs/{run.name}/{s.name}",

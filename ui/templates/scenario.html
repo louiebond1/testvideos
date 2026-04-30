@@ -59,6 +59,13 @@
         {% else %}
         <p class="text-sm text-slate-500 italic">No video recorded for this run.</p>
         {% endif %}
+        {% if run.trace_url %}
+        <p class="text-xs text-slate-500 mt-3">
+          Frame-by-frame replay: <a href="{{ run.trace_url }}" download class="text-violet-600 underline">download trace.zip</a>
+          → drop into <a href="https://trace.playwright.dev" target="_blank" class="text-violet-600 underline">trace.playwright.dev</a>
+          for DOM snapshots, network calls and console logs at every action.
+        </p>
+        {% endif %}
       </div>
 
       <!-- Feedback panel -->
