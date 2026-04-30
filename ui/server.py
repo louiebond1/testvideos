@@ -39,17 +39,39 @@ _PAUSE_EVENTS: dict[str, threading.Event] = {}
 _PAUSE_FIX: dict[str, dict | None] = {}
 
 
+def _humanise_error(raw_error: str) -> str:
+    """Ask Claude to translate a raw Playwright/Python error into plain English."""
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if not key or not raw_error:
+        return raw_error
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=key)
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=120,
+            messages=[{"role": "user", "content":
+                f"Translate this Playwright/Python error into one plain-English sentence that a non-technical person can understand. "
+                f"Say what couldn't be found or what timed out, in simple words. No jargon. No code. Max 25 words.\n\nError: {raw_error[:400]}"}],
+        )
+        return msg.content[0].text.strip()
+    except Exception:
+        return raw_error
+
+
 def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id: str, error_message: str = ""):
     """Called by runner when a step fails — pauses and waits for human fix."""
     evt = threading.Event()
     _PAUSE_EVENTS[scenario_id] = evt
     _PAUSE_FIX[scenario_id] = None
     shot_url = f"/runs/{run_id}/{Path(screenshot_path).name}" if screenshot_path else None
+    human_error = _humanise_error(error_message)
     _ACTIVE_RUNS[scenario_id].update({
         "status": "paused",
         "paused_step": step_id,
         "screenshot_url": shot_url,
-        "error_message": error_message,
+        "error_message": human_error,
+        "raw_error": error_message,
     })
     print(f"  [pause] {scenario_id} paused on {step_id} — waiting up to 10 min for human fix")
     evt.wait(timeout=600)

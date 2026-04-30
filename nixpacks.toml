@@ -1,2 +1,5 @@
+[phases.setup]
+aptPkgs = ["ffmpeg"]
+
 [phases.build]
 cmds = ["playwright install chromium --with-deps"]
