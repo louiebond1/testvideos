@@ -107,12 +107,15 @@ def run_scenario(
         )
         # Playwright trace — DOM + screenshots + network at every action.
         # Drop trace.zip into trace.playwright.dev for frame-by-frame replay.
-        # snapshots=False to keep memory usage low on Railway — still captures
-        # screenshots and click points which is enough for replay debugging.
-        try:
-            context.tracing.start(screenshots=True, snapshots=False, sources=False)
-        except Exception as _exc:
-            print(f"  [trace] tracing.start failed: {_exc}")
+        # Tracing is opt-in via ENABLE_TRACE env var — it can OOM the browser
+        # on small Railway instances during heavy SF page loads (e.g. proxy
+        # redirects). Off by default; turn on locally when you need replay.
+        _trace_on = os.getenv("ENABLE_TRACE", "").lower() in ("1", "true", "yes")
+        if _trace_on:
+            try:
+                context.tracing.start(screenshots=True, snapshots=False, sources=False)
+            except Exception as _exc:
+                print(f"  [trace] tracing.start failed: {_exc}")
         page = context.new_page()
 
         # Runtime context — values extracted from SF as steps complete
@@ -235,10 +238,11 @@ def run_scenario(
             print(f"  [runner error] {exc}")
         finally:
             result.ended_at = datetime.utcnow()
-            try:
-                context.tracing.stop(path=str(runs_dir / "trace.zip"))
-            except Exception as _exc:
-                print(f"  [trace] tracing.stop failed: {_exc}")
+            if _trace_on:
+                try:
+                    context.tracing.stop(path=str(runs_dir / "trace.zip"))
+                except Exception as _exc:
+                    print(f"  [trace] tracing.stop failed: {_exc}")
             context.close()
             browser.close()
 
