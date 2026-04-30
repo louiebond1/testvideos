@@ -273,6 +273,19 @@ def analyse_scenario_route(scenario_id: str):
     if not scenario:
         raise HTTPException(404, "Scenario not found")
     analysis = analyse_scenario(scenario)
+
+    # Filter out questions for steps that already have complete feedback written,
+    # unless that feedback contains a {{placeholder}} (meaning the answer is still needed).
+    existing_feedback = _load_feedback().get(scenario_id, {})
+    def _needs_question(q: dict) -> bool:
+        step_id = q.get("step_id", "")
+        fb = existing_feedback.get(step_id, "")
+        if not fb:
+            return True  # no feedback written — question is relevant
+        placeholder = "{{" + q.get("key", "") + "}}"
+        return placeholder in fb  # only ask if feedback uses this placeholder
+    analysis["questions"] = [q for q in analysis.get("questions", []) if _needs_question(q)]
+
     return JSONResponse(analysis)
 
 
