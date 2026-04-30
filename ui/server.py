@@ -377,6 +377,73 @@ def run_steps(scenario_id: str):
     return JSONResponse({"steps": [], "status": "idle"})
 
 
+@app.post("/api/interpret-fix/{scenario_id}")
+async def interpret_fix(scenario_id: str, request: Request):
+    """Use Claude Vision to turn a plain-English description into runner commands."""
+    body = await request.json()
+    description = body.get("description", "").strip()
+    screenshot_url = body.get("screenshot_url", "")
+    step_id = body.get("step_id", "")
+
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if not key or not description:
+        return JSONResponse({"commands": "", "note": "no key or description"})
+
+    try:
+        import anthropic, base64
+        client = anthropic.Anthropic(api_key=key)
+        content: list = []
+
+        # Attach screenshot if available
+        if screenshot_url:
+            parts = screenshot_url.strip("/").split("/")
+            if len(parts) >= 3 and parts[0] == "runs":
+                shot_path = RUNS_DIR / parts[1] / parts[2]
+                if shot_path.exists():
+                    img_b64 = base64.standard_b64encode(shot_path.read_bytes()).decode()
+                    content.append({
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/png", "data": img_b64},
+                    })
+
+        content.append({
+            "type": "text",
+            "text": f"""You control a SAP SuccessFactors browser (1280x720) via Playwright.
+A test step failed{f' ({step_id})' if step_id else ''}. The human described how to fix it.
+
+Human description: {description}
+
+Generate ONLY the Playwright commands to carry out the fix. Available commands (one per line):
+  GOTO: /sf/start#...
+  CLICK: button text or visible label
+  CLICK_XY: x, y  (pixel coords on 1280x720)
+  TYPE: text to type
+  PRESS: Key (Enter, ArrowDown, Escape, Tab)
+  WAIT: milliseconds
+  JS: javascript expression
+  FILL: selector | value
+
+Rules:
+- If the human mentions a position like "top right", "bottom left", estimate CLICK_XY coords from the screenshot.
+- If they name a button/link, use CLICK: that name.
+- Output ONLY commands, no explanations, no markdown fences.
+- Maximum 5 commands.""",
+        })
+
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=200,
+            messages=[{"role": "user", "content": content}],
+        )
+        commands = msg.content[0].text.strip()
+        if commands.startswith("```"):
+            commands = "\n".join(commands.split("\n")[1:-1]).strip()
+        return JSONResponse({"commands": commands})
+    except Exception as exc:
+        print(f"[interpret-fix] error: {exc}")
+        return JSONResponse({"commands": "", "error": str(exc)})
+
+
 @app.post("/api/run/{scenario_id}/cancel")
 def cancel_run(scenario_id: str):
     """Force-reset a stuck or paused run."""
