@@ -87,7 +87,7 @@
           </div>
 
           <textarea id="feedback-text" rows="3"
-                    placeholder="Click the screenshot above to add click points, or type commands:&#10;SHADOW_CLICK: Recruiting&#10;CLICK_XY: 500, 350&#10;TYPE: Alex Brackley&#10;PRESS: Enter&#10;WAIT: 1000"
+                    placeholder="Click the screenshot above to add click points, or type commands:&#10;NAVIGATE: Recruiting&#10;SHADOW_CLICK: Position Org Chart&#10;CLICK_XY: 500, 350&#10;TYPE: Alex Brackley&#10;PRESS: Enter&#10;WAIT: 1000&#10;JS: document.querySelector('input[type=checkbox]').click()"
                     class="w-full text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-400 transition"></textarea>
           <button onclick="saveAndRetry()"
                   id="retry-btn"
@@ -164,9 +164,9 @@
 
   _trainWrap.addEventListener('click', (e) => {
     const rect = _trainImg.getBoundingClientRect();
-    // Screenshots are always 1280×720
+    // Screenshots are 1280×720
     const x = Math.round((e.clientX - rect.left) * (1280 / rect.width));
-    const y = Math.round((e.clientY - rect.top)  * (720  / rect.height));
+    const y = Math.round((e.clientY - rect.top)  * (720 / rect.height));
 
     // Append command to textarea
     const ta = document.getElementById('feedback-text');
@@ -197,17 +197,216 @@
     ta.value = ta.value.split('\n').filter(l => !l.trim().startsWith('CLICK_XY')).join('\n').trim();
   }
 
+  // ── Pause overlay ────────────────────────────────────────────────────────────
+  let _pauseOverlay = null;
+
+  function _showPauseOverlay(state) {
+    if (_pauseOverlay) return;
+    const shotUrl = state.screenshot_url || '';
+    const stepId  = state.paused_step  || '';
+
+    const overlay = document.createElement('div');
+    overlay.id = 'pause-overlay';
+    overlay.style.cssText = `
+      position:fixed; inset:0; z-index:9999; background:#0a0a0a;
+      display:flex; flex-direction:column; font-family:monospace;
+    `;
+    overlay.innerHTML = `
+      <div style="background:#1a0a2e; border-bottom:2px solid #7c3aed; padding:14px 20px; display:flex; align-items:center; gap:12px; flex-shrink:0;">
+        <div style="width:10px;height:10px;background:#ef4444;border-radius:50%;animation:pulse 1s infinite;"></div>
+        <span style="color:#fff;font-size:15px;font-weight:700;">Step failed — show me where to click</span>
+        <span style="color:#9ca3af;font-size:12px;margin-left:auto;">${stepId}</span>
+      </div>
+      <div style="flex:1;display:flex;gap:0;overflow:hidden;">
+        <!-- Screenshot + canvas -->
+        <div style="flex:1;overflow:auto;position:relative;cursor:crosshair;background:#111;" id="po-img-wrap">
+          <img id="po-img" src="${shotUrl}" style="max-width:100%;display:block;user-select:none;" draggable="false"/>
+          <canvas id="po-canvas" style="position:absolute;top:0;left:0;pointer-events:none;"></canvas>
+        </div>
+        <!-- Right panel -->
+        <div style="width:320px;flex-shrink:0;background:#111;border-left:1px solid #222;display:flex;flex-direction:column;padding:16px;gap:10px;">
+          <p style="color:#9ca3af;font-size:11px;margin:0;">Draw a circle around where it should click, then add any commands below.</p>
+          <div style="background:#000;border:1px solid #333;border-radius:6px;padding:8px;min-height:28px;">
+            <span style="color:#6b7280;font-size:11px;">Generated command:</span><br>
+            <span id="po-generated" style="color:#22c55e;font-size:13px;font-weight:700;word-break:break-all;"></span>
+          </div>
+          <textarea id="po-commands" rows="6" placeholder="CLICK_XY will appear above when you circle&#10;Add extra commands here:&#10;WAIT: 1000&#10;CLICK: OK"
+            style="background:#1a1a1a;color:#e5e7eb;border:1px solid #333;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;resize:vertical;outline:none;"></textarea>
+          <textarea id="po-comment" rows="2" placeholder="Optional note (e.g. 'this is the Actions button in the popup')"
+            style="background:#1a1a1a;color:#9ca3af;border:1px solid #333;border-radius:6px;padding:8px;font-size:11px;font-family:monospace;resize:none;outline:none;"></textarea>
+          <label style="display:flex;align-items:center;gap:8px;color:#9ca3af;font-size:11px;cursor:pointer;">
+            <input type="checkbox" id="po-save" checked style="accent-color:#7c3aed;">
+            Remember this fix for similar steps
+          </label>
+          <button id="po-send" onclick="_submitFix()"
+            style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:monospace;">
+            Send fix — resume run
+          </button>
+          <button onclick="_clearCircle()"
+            style="background:transparent;color:#6b7280;border:1px solid #333;border-radius:6px;padding:6px;font-size:11px;cursor:pointer;">
+            Clear drawing
+          </button>
+          <p id="po-status" style="color:#22c55e;font-size:12px;text-align:center;margin:0;"></p>
+        </div>
+      </div>
+      <style>@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}</style>
+    `;
+    document.body.appendChild(overlay);
+    _pauseOverlay = overlay;
+
+    // Canvas drawing — track circle
+    const img   = overlay.querySelector('#po-img');
+    const wrap  = overlay.querySelector('#po-img-wrap');
+    const canvas= overlay.querySelector('#po-canvas');
+    const ctx   = canvas.getContext('2d');
+    let drawing = false, pts = [];
+
+    function _resizeCanvas() {
+      const r = img.getBoundingClientRect();
+      canvas.width  = r.width;
+      canvas.height = r.height;
+      canvas.style.width  = r.width  + 'px';
+      canvas.style.height = r.height + 'px';
+    }
+    img.onload = _resizeCanvas;
+    if (img.complete) _resizeCanvas();
+
+    wrap.addEventListener('mousedown', e => {
+      if (e.target !== img && e.target !== canvas) return;
+      drawing = true; pts = [];
+      canvas.style.pointerEvents = 'auto';
+      const r = img.getBoundingClientRect();
+      pts.push({x: e.clientX - r.left, y: e.clientY - r.top});
+    });
+    wrap.addEventListener('mousemove', e => {
+      if (!drawing) return;
+      const r = img.getBoundingClientRect();
+      pts.push({x: e.clientX - r.left, y: e.clientY - r.top});
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.beginPath();
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth   = 3;
+      ctx.shadowColor = '#ef4444';
+      ctx.shadowBlur  = 8;
+      pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.stroke();
+    });
+    wrap.addEventListener('mouseup', e => {
+      if (!drawing || pts.length < 2) return;
+      drawing = false;
+      canvas.style.pointerEvents = 'none';
+      // Compute center of drawn path → map to 1280×720
+      const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const r  = img.getBoundingClientRect();
+      const sfX = Math.round(cx * 1280 / r.width);
+      const sfY = Math.round(cy * 720  / r.height);
+      const cmd = 'CLICK_XY: ' + sfX + ', ' + sfY;
+      overlay.querySelector('#po-generated').textContent = cmd;
+      // Draw crosshair at center
+      ctx.beginPath();
+      ctx.strokeStyle = '#facc15';
+      ctx.lineWidth = 2;
+      ctx.moveTo(cx-10, cy); ctx.lineTo(cx+10, cy);
+      ctx.moveTo(cx, cy-10); ctx.lineTo(cx, cy+10);
+      ctx.stroke();
+    });
+  }
+
+  window._clearCircle = function() {
+    if (!_pauseOverlay) return;
+    const canvas = _pauseOverlay.querySelector('#po-canvas');
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    _pauseOverlay.querySelector('#po-generated').textContent = '';
+  };
+
+  window._submitFix = async function() {
+    const generated = _pauseOverlay.querySelector('#po-generated').textContent.trim();
+    const extra     = _pauseOverlay.querySelector('#po-commands').value.trim();
+    const comment   = _pauseOverlay.querySelector('#po-comment').value.trim();
+    const save      = _pauseOverlay.querySelector('#po-save').checked;
+    const parts     = [generated, extra].filter(Boolean);
+    const commands  = parts.join('\n');
+    if (!commands) { alert('Draw a circle first or type a command'); return; }
+    const btn = _pauseOverlay.querySelector('#po-send');
+    btn.textContent = 'Sending…'; btn.disabled = true;
+    const res = await fetch(`/api/run/${SCENARIO_ID}/resume`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({commands, comment, save_feedback: save}),
+    });
+    if (res.ok) {
+      _pauseOverlay.querySelector('#po-status').textContent = 'Fix sent — resuming…';
+      setTimeout(() => {
+        document.body.removeChild(_pauseOverlay);
+        _pauseOverlay = null;
+      }, 800);
+    } else {
+      btn.textContent = 'Send fix — resume run'; btn.disabled = false;
+    }
+  };
+
+  // ── Pre-run questions overlay ────────────────────────────────────────────────
+  async function _showQuestionsIfNeeded() {
+    const analysis = await (await fetch(`/api/analyse/${SCENARIO_ID}`)).json();
+    const questions = (analysis.questions || []).filter(q => !q.default);
+    if (!questions.length) return {};
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;`;
+      const box = document.createElement('div');
+      box.style.cssText = `background:#fff;border-radius:12px;padding:28px;max-width:480px;width:90%;`;
+      box.innerHTML = `
+        <h2 style="font-size:16px;font-weight:700;margin-bottom:4px;">Before we start</h2>
+        <p style="font-size:12px;color:#6b7280;margin-bottom:16px;">Answer these so the script knows what to use.</p>
+        ${questions.map(q => `
+          <div style="margin-bottom:12px;">
+            <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:4px;">${q.question}</label>
+            <input id="q-${q.key}" type="text" value="${q.default||''}" placeholder="Type here…"
+              style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:7px 10px;font-size:13px;outline:none;">
+          </div>`).join('')}
+        <button onclick="this.closest('[style]').dispatchEvent(new CustomEvent('submit',{bubbles:true}))"
+          style="width:100%;background:#111;color:#fff;border:none;border-radius:8px;padding:10px;font-size:14px;font-weight:600;cursor:pointer;margin-top:4px;">
+          Start run
+        </button>`;
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('submit', () => {
+        const answers = {};
+        questions.forEach(q => { answers[q.key] = document.getElementById(`q-${q.key}`).value.trim(); });
+        document.body.removeChild(overlay);
+        resolve(answers);
+      });
+    });
+  }
+
   // ── Run button ──────────────────────────────────────────────────────────────
   async function startRun() {
     const btn = document.getElementById('run-btn');
     const label = document.getElementById('run-label');
     btn.disabled = true;
+    label.textContent = 'Checking…';
+
+    const answers = await _showQuestionsIfNeeded();
+
     label.textContent = 'Running…';
-    const res = await fetch(`/api/run/${SCENARIO_ID}`, { method: 'POST' });
+    const res = await fetch(`/api/run/${SCENARIO_ID}`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(answers),
+    });
     if (!res.ok) { label.textContent = 'Failed to start'; btn.disabled = false; return; }
     _pollTimer = setInterval(async () => {
       const data = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
       if (data.status === 'done') { clearInterval(_pollTimer); window.location.reload(); }
+      else if (data.status === 'paused') {
+        label.textContent = 'Waiting for your fix…';
+        _showPauseOverlay(data);
+      }
+      else if (data.status === 'running' && _pauseOverlay) {
+        // resumed — overlay already removed by _submitFix
+      }
       else if (data.status === 'error') {
         clearInterval(_pollTimer);
         label.textContent = 'Error';

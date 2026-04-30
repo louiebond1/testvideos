@@ -34,6 +34,29 @@ STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 # In-memory run state: scenario_id -> {status, run_id, passed?, error?}
 _ACTIVE_RUNS: dict[str, dict] = {}
 
+# Pause/resume state: scenario_id -> {event, fix}
+_PAUSE_EVENTS: dict[str, threading.Event] = {}
+_PAUSE_FIX: dict[str, dict | None] = {}
+
+
+def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id: str):
+    """Called by runner when a step fails — pauses and waits for human fix."""
+    evt = threading.Event()
+    _PAUSE_EVENTS[scenario_id] = evt
+    _PAUSE_FIX[scenario_id] = None
+    shot_url = f"/runs/{run_id}/{Path(screenshot_path).name}" if screenshot_path else None
+    _ACTIVE_RUNS[scenario_id].update({
+        "status": "paused",
+        "paused_step": step_id,
+        "screenshot_url": shot_url,
+    })
+    print(f"  [pause] {scenario_id} paused on {step_id} — waiting up to 10 min for human fix")
+    evt.wait(timeout=600)
+    fix = _PAUSE_FIX.pop(scenario_id, None)
+    _PAUSE_EVENTS.pop(scenario_id, None)
+    _ACTIVE_RUNS[scenario_id]["status"] = "running"
+    return fix
+
 
 VALID_STATUSES = {"pass", "fail", "blocked", "not_tested"}
 FEEDBACK_FILE = STORAGE_DIR / "step_feedback.json"
@@ -241,8 +264,20 @@ def scenario_detail(request: Request, scenario_id: str):
     )
 
 
+@app.get("/api/analyse/{scenario_id}")
+def analyse_scenario_route(scenario_id: str):
+    """Return pre-run analysis: data dependencies and questions to ask."""
+    from engine.scenario_analyst import analyse_scenario
+    scenarios = _load_scenarios()
+    scenario = next((s for s in scenarios if s.scenario_id == scenario_id), None)
+    if not scenario:
+        raise HTTPException(404, "Scenario not found")
+    analysis = analyse_scenario(scenario)
+    return JSONResponse(analysis)
+
+
 @app.post("/api/run/{scenario_id}")
-def trigger_run(scenario_id: str):
+async def trigger_run(scenario_id: str, request: Request):
     scenarios = _load_scenarios()
     scenario = next((s for s in scenarios if s.scenario_id == scenario_id), None)
     if not scenario:
@@ -251,12 +286,21 @@ def trigger_run(scenario_id: str):
     if _ACTIVE_RUNS.get(scenario_id, {}).get("status") == "running":
         return JSONResponse({"ok": False, "reason": "already running"}, status_code=409)
 
+    # Accept optional pre-run answers (e.g. proxy_name, candidate_name)
+    try:
+        body = await request.json()
+        pre_answers = body if isinstance(body, dict) else {}
+    except Exception:
+        pre_answers = {}
+
     run_id = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     _ACTIVE_RUNS[scenario_id] = {"status": "running", "run_id": run_id}
 
     def _run():
         try:
-            result = run_scenario(scenario, runs_root=RUNS_DIR, headless=True)
+            result = run_scenario(scenario, runs_root=RUNS_DIR, headless=True,
+                                  pause_callback=lambda **kw: _pause_callback(**kw),
+                                  initial_context=pre_answers)
             _ACTIVE_RUNS[scenario_id] = {
                 "status": "done",
                 "run_id": result.run_id,
@@ -281,6 +325,30 @@ def run_status(scenario_id: str):
     return JSONResponse(_ACTIVE_RUNS.get(scenario_id, {"status": "idle"}))
 
 
+@app.post("/api/run/{scenario_id}/resume")
+async def resume_run(scenario_id: str, request: Request):
+    body = await request.json()
+    commands = body.get("commands", "").strip()
+    comment = body.get("comment", "").strip()
+    save_feedback = body.get("save_feedback", True)
+
+    if scenario_id not in _PAUSE_EVENTS:
+        raise HTTPException(400, "No paused run for this scenario")
+
+    _PAUSE_FIX[scenario_id] = {"commands": commands, "comment": comment}
+
+    # Optionally persist to step_feedback.json so it survives future runs
+    if save_feedback and commands:
+        paused_step = _ACTIVE_RUNS.get(scenario_id, {}).get("paused_step")
+        if paused_step:
+            data = _load_feedback()
+            data.setdefault(scenario_id, {})[paused_step] = commands
+            _save_feedback(data)
+
+    _PAUSE_EVENTS[scenario_id].set()
+    return JSONResponse({"ok": True})
+
+
 def _git_push_feedback():
     """Commit and push feedback file to GitHub in the background."""
     import subprocess
@@ -292,6 +360,129 @@ def _git_push_feedback():
         print("[feedback] pushed to GitHub — Railway redeploying")
     except Exception as exc:
         print(f"[feedback] git push skipped: {exc}")
+
+
+@app.get("/click/{scenario_id}/{step_id}", response_class=HTMLResponse)
+def click_trainer(scenario_id: str, step_id: str):
+    """Full-screen click trainer — shows latest screenshot for a step, click = coordinates."""
+    import re as _re
+    runs = sorted(RUNS_DIR.iterdir(), reverse=True) if RUNS_DIR.exists() else []
+    img_url = None
+    for run in runs:
+        if not run.is_dir():
+            continue
+        for shot in sorted(run.glob(f"{step_id}*.png"), reverse=True):
+            img_url = f"/runs/{run.name}/{shot.name}"
+            break
+        if img_url:
+            break
+
+    if not img_url:
+        return HTMLResponse(f"<h2>No screenshot found for {step_id}</h2>", status_code=404)
+
+    feedback_data = _load_feedback()
+    current_feedback = feedback_data.get(scenario_id, {}).get(step_id, "")
+
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Click Trainer — {step_id}</title>
+<style>
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  body {{ background:#111; color:#fff; font-family:monospace; display:flex; flex-direction:column; height:100vh; }}
+  #header {{ background:#1a1a1a; border-bottom:1px solid #333; padding:10px 16px; display:flex; align-items:center; gap:12px; flex-shrink:0; }}
+  #header h1 {{ font-size:13px; color:#aaa; }}
+  #coords {{ background:#000; color:#0f0; font-size:14px; font-weight:bold; padding:4px 10px; border-radius:4px; min-width:130px; text-align:center; }}
+  #copy-btn {{ background:#2563eb; color:#fff; border:none; padding:5px 12px; border-radius:4px; cursor:pointer; font-size:12px; font-family:monospace; }}
+  #copy-btn:hover {{ background:#1d4ed8; }}
+  #add-btn {{ background:#16a34a; color:#fff; border:none; padding:5px 12px; border-radius:4px; cursor:pointer; font-size:12px; font-family:monospace; }}
+  #add-btn:hover {{ background:#15803d; }}
+  #img-wrap {{ flex:1; overflow:auto; display:flex; align-items:flex-start; justify-content:center; padding:8px; position:relative; cursor:crosshair; }}
+  #shot {{ max-width:100%; display:block; user-select:none; }}
+  .dot {{ position:absolute; width:20px; height:20px; background:#ef4444; border:2px solid #fff; border-radius:50%; transform:translate(-50%,-50%); pointer-events:none; box-shadow:0 0 0 2px #ef4444; }}
+  .dot-label {{ position:absolute; background:#ef4444; color:#fff; font-size:10px; padding:1px 4px; border-radius:3px; transform:translate(8px,-50%); pointer-events:none; white-space:nowrap; }}
+  #cmd-panel {{ background:#1a1a1a; border-top:1px solid #333; padding:10px 16px; flex-shrink:0; display:flex; align-items:center; gap:8px; }}
+  #cmd-out {{ flex:1; background:#000; color:#0f0; font-size:12px; padding:6px 10px; border-radius:4px; border:1px solid #333; min-height:32px; word-break:break-all; }}
+  #save-btn {{ background:#7c3aed; color:#fff; border:none; padding:6px 14px; border-radius:4px; cursor:pointer; font-size:12px; font-family:monospace; }}
+  #save-btn:hover {{ background:#6d28d9; }}
+  #status {{ font-size:11px; color:#aaa; }}
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>{step_id}</h1>
+  <div id="coords">click image</div>
+  <button id="copy-btn" onclick="copyCoords()">Copy CLICK_XY</button>
+  <button id="add-btn" onclick="addToCommands()">Add to commands</button>
+  <span id="status"></span>
+</div>
+<div id="img-wrap">
+  <img id="shot" src="{img_url}" draggable="false" />
+</div>
+<div id="cmd-panel">
+  <div id="cmd-out">{current_feedback or "(commands will appear here)"}</div>
+  <button id="save-btn" onclick="saveCommands()">Save &amp; close</button>
+</div>
+
+<script>
+  const SCENARIO_ID = "{scenario_id}";
+  const STEP_ID = "{step_id}";
+  let lastX = 0, lastY = 0;
+  const wrap = document.getElementById('img-wrap');
+  const shot = document.getElementById('shot');
+  const coords = document.getElementById('coords');
+  const cmdOut = document.getElementById('cmd-out');
+
+  wrap.addEventListener('click', (e) => {{
+    const rect = shot.getBoundingClientRect();
+    const x = Math.round((e.clientX - rect.left) * (1280 / rect.width));
+    const y = Math.round((e.clientY - rect.top)  * (720  / rect.height));
+    lastX = x; lastY = y;
+    coords.textContent = x + ', ' + y;
+
+    // dot
+    const dot = document.createElement('div');
+    dot.className = 'dot';
+    dot.style.left = (e.clientX - wrap.getBoundingClientRect().left) + 'px';
+    dot.style.top  = (e.clientY - wrap.getBoundingClientRect().top)  + 'px';
+    const lbl = document.createElement('div');
+    lbl.className = 'dot-label';
+    lbl.style.left = dot.style.left;
+    lbl.style.top  = dot.style.top;
+    lbl.textContent = x + ',' + y;
+    wrap.appendChild(dot);
+    wrap.appendChild(lbl);
+  }});
+
+  function copyCoords() {{
+    navigator.clipboard.writeText('CLICK_XY: ' + lastX + ', ' + lastY);
+    document.getElementById('status').textContent = 'copied!';
+    setTimeout(() => document.getElementById('status').textContent = '', 1500);
+  }}
+
+  function addToCommands() {{
+    const cur = cmdOut.textContent.trim();
+    const line = 'CLICK_XY: ' + lastX + ', ' + lastY;
+    cmdOut.textContent = (cur && cur !== '(commands will appear here)') ? cur + '\\n' + line : line;
+  }}
+
+  async function saveCommands() {{
+    const text = cmdOut.textContent.trim();
+    if (!text || text === '(commands will appear here)') return;
+    const fd = new FormData();
+    fd.append('scenario_id', SCENARIO_ID);
+    fd.append('step_id', STEP_ID);
+    fd.append('feedback', text);
+    const res = await fetch('/api/step-feedback', {{ method: 'POST', body: fd }});
+    if (res.ok) {{
+      document.getElementById('status').textContent = 'saved!';
+      setTimeout(() => window.close(), 800);
+    }}
+  }}
+</script>
+</body>
+</html>""")
 
 
 @app.post("/api/step-feedback")
