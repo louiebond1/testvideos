@@ -32,6 +32,15 @@
 
     <div id="run-error" class="hidden mt-4 p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs font-mono text-rose-700"></div>
 
+    <!-- ── Live run progress ── -->
+    <div id="live-panel" class="hidden mt-6 bg-white border border-slate-200 rounded-xl p-4">
+      <h3 class="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+        <span id="live-spinner" class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+        <span id="live-title">Running…</span>
+      </h3>
+      <div id="live-steps" class="space-y-1"></div>
+    </div>
+
     <!-- ── Step failure panel (shown when run is paused) ── -->
     <div id="failure-panel" class="hidden mt-6 rounded-xl border-2 border-rose-400 bg-rose-50 overflow-hidden">
       <div class="flex items-center gap-3 bg-rose-500 px-5 py-3">
@@ -190,10 +199,47 @@
   let _selectedStep = null;
   let _pollTimer = null;
 
+  let _stepPollTimer = null;
+
+  function _renderSteps(steps) {
+    const container = document.getElementById('live-steps');
+    container.innerHTML = steps.map(s => `
+      <div class="flex items-center gap-2 py-1 border-b border-slate-50 last:border-0">
+        <span class="w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold
+          ${s.passed ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}">
+          ${s.passed ? '✓' : '✗'}
+        </span>
+        <span class="text-xs font-mono text-slate-600 w-28 flex-shrink-0">${s.step_id}</span>
+        ${!s.passed && s.error ? `<span class="text-xs text-rose-600 truncate" title="${s.error.replace(/"/g,'&quot;')}">${s.error.slice(0,80)}</span>` : ''}
+      </div>`).join('');
+  }
+
+  function _startStepPoll() {
+    if (_stepPollTimer) clearInterval(_stepPollTimer);
+    document.getElementById('live-panel').classList.remove('hidden');
+    _stepPollTimer = setInterval(async () => {
+      const d = await (await fetch(`/api/run/${SCENARIO_ID}/steps`)).json();
+      if (d.steps && d.steps.length) _renderSteps(d.steps);
+      if (d.status === 'done' || d.status === 'error') {
+        clearInterval(_stepPollTimer);
+        document.getElementById('live-spinner').classList.remove('animate-pulse', 'bg-blue-500');
+        const failed = d.steps.filter(s => !s.passed);
+        if (failed.length) {
+          document.getElementById('live-spinner').classList.add('bg-rose-500');
+          document.getElementById('live-title').textContent = `Failed on ${failed[failed.length-1].step_id}`;
+        } else {
+          document.getElementById('live-spinner').classList.add('bg-emerald-500');
+          document.getElementById('live-title').textContent = 'All steps passed';
+        }
+      }
+    }, 2000);
+  }
+
   function _setRunning() {
     document.getElementById('run-btn').disabled = true;
     document.getElementById('run-label').textContent = 'Running…';
     document.getElementById('cancel-btn').classList.remove('hidden');
+    _startStepPoll();
   }
   function _setPaused(data) {
     document.getElementById('run-btn').disabled = true;
@@ -213,6 +259,25 @@
     if (_pollTimer) clearInterval(_pollTimer);
     _setIdle();
   }
+
+  // On load: show last run step results immediately (from disk)
+  (async function _loadLastRun() {
+    const d = await (await fetch(`/api/run/${SCENARIO_ID}/steps`)).json();
+    if (d.steps && d.steps.length) {
+      document.getElementById('live-panel').classList.remove('hidden');
+      _renderSteps(d.steps);
+      const failed = d.steps.filter(s => !s.passed);
+      const spinner = document.getElementById('live-spinner');
+      spinner.classList.remove('animate-pulse', 'bg-blue-500');
+      if (failed.length) {
+        spinner.classList.add('bg-rose-500');
+        document.getElementById('live-title').textContent = `Last run — failed on ${failed[failed.length-1].step_id}`;
+      } else {
+        spinner.classList.add('bg-emerald-500');
+        document.getElementById('live-title').textContent = 'Last run — all steps passed';
+      }
+    }
+  })();
 
   // On load: check if a run is already paused or running and resume polling
   (async function _checkOnLoad() {

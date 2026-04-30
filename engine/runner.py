@@ -82,6 +82,7 @@ def run_scenario(
     headless: bool = False,
     pause_callback=None,
     initial_context: dict | None = None,
+    step_done_callback=None,
 ) -> ScenarioResult:
     """Login to SF, run all (or first *max_steps*) steps, record video."""
     run_id = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -170,6 +171,13 @@ def run_scenario(
                         pass
 
                 result.steps.append(step_result)
+
+                # Notify caller of step completion (used for live disk log)
+                if step_done_callback:
+                    shot_name = Path(step_result.screenshot_path).name if step_result.screenshot_path else ""
+                    shot_url = f"/runs/{run_id}/{shot_name}" if shot_name else ""
+                    step_done_callback(step_result.step_id, step_result.passed,
+                                       step_result.error_message, shot_url)
 
                 status = "PASS" if step_result.passed else "FAIL"
                 print(f"  [step {i}] {status} in {step_result.duration_s}s")

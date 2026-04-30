@@ -310,11 +310,36 @@ async def trigger_run(scenario_id: str, request: Request):
     run_id = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     _ACTIVE_RUNS[scenario_id] = {"status": "running", "run_id": run_id}
 
-    def _run():
+    # Live step log written to disk so it survives page reload
+    step_log_file = RUNS_DIR / f"{scenario_id}_last_run.json"
+
+    def _write_step_log(steps_so_far: list, run_status: str):
         try:
+            step_log_file.write_text(json.dumps({
+                "run_id": run_id,
+                "status": run_status,
+                "steps": steps_so_far,
+            }, indent=2))
+        except Exception:
+            pass
+
+    def _run():
+        steps_log = []
+        try:
+            def _step_done_callback(step_id, passed, error, screenshot_url):
+                steps_log.append({
+                    "step_id": step_id,
+                    "passed": passed,
+                    "error": error or "",
+                    "screenshot_url": screenshot_url or "",
+                })
+                _write_step_log(steps_log, "running")
+
             result = run_scenario(scenario, runs_root=RUNS_DIR, headless=True,
                                   pause_callback=lambda **kw: _pause_callback(**kw),
-                                  initial_context=pre_answers)
+                                  initial_context=pre_answers,
+                                  step_done_callback=_step_done_callback)
+            _write_step_log(steps_log, "done")
             _ACTIVE_RUNS[scenario_id] = {
                 "status": "done",
                 "run_id": result.run_id,
@@ -324,6 +349,7 @@ async def trigger_run(scenario_id: str, request: Request):
             import traceback
             print(f"[RUN ERROR] {scenario_id}: {exc}")
             traceback.print_exc()
+            _write_step_log(steps_log, "error")
             _ACTIVE_RUNS[scenario_id] = {
                 "status": "error",
                 "run_id": run_id,
@@ -337,6 +363,18 @@ async def trigger_run(scenario_id: str, request: Request):
 @app.get("/api/run/{scenario_id}/status")
 def run_status(scenario_id: str):
     return JSONResponse(_ACTIVE_RUNS.get(scenario_id, {"status": "idle"}))
+
+
+@app.get("/api/run/{scenario_id}/steps")
+def run_steps(scenario_id: str):
+    """Return step-by-step results from the last run (persisted to disk)."""
+    f = RUNS_DIR / f"{scenario_id}_last_run.json"
+    if f.exists():
+        try:
+            return JSONResponse(json.loads(f.read_text()))
+        except Exception:
+            pass
+    return JSONResponse({"steps": [], "status": "idle"})
 
 
 @app.post("/api/run/{scenario_id}/cancel")
