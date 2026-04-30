@@ -440,12 +440,12 @@ def _smart_click(page: Page, target: str) -> None:
     the accessibility tree vs visible text.
     """
     strategies = [
-        ("text",       lambda: page.get_by_text(target, exact=False).first.click(timeout=2500)),
-        ("button",     lambda: page.get_by_role("button", name=target).first.click(timeout=2000)),
-        ("link",       lambda: page.get_by_role("link", name=target).first.click(timeout=2000)),
-        ("menuitem",   lambda: page.get_by_role("menuitem", name=target).first.click(timeout=2000)),
-        ("option",     lambda: page.get_by_role("option", name=target).first.click(timeout=2000)),
-        ("aria-label", lambda: page.locator(f'[aria-label="{target}"], [title="{target}"]').first.click(timeout=2000)),
+        ("text",       lambda: page.get_by_text(target, exact=False).first.click(timeout=6000)),
+        ("button",     lambda: page.get_by_role("button", name=target).first.click(timeout=1500)),
+        ("menuitem",   lambda: page.get_by_role("menuitem", name=target).first.click(timeout=1500)),
+        ("link",       lambda: page.get_by_role("link", name=target).first.click(timeout=1000)),
+        ("option",     lambda: page.get_by_role("option", name=target).first.click(timeout=1000)),
+        ("aria-label", lambda: page.locator(f'[aria-label="{target}"], [title="{target}"]').first.click(timeout=1500)),
     ]
     last_err = None
     for name, fn in strategies:
