@@ -107,8 +107,10 @@ def run_scenario(
         )
         # Playwright trace — DOM + screenshots + network at every action.
         # Drop trace.zip into trace.playwright.dev for frame-by-frame replay.
+        # snapshots=False to keep memory usage low on Railway — still captures
+        # screenshots and click points which is enough for replay debugging.
         try:
-            context.tracing.start(screenshots=True, snapshots=True, sources=False)
+            context.tracing.start(screenshots=True, snapshots=False, sources=False)
         except Exception as _exc:
             print(f"  [trace] tracing.start failed: {_exc}")
         page = context.new_page()
@@ -152,8 +154,6 @@ def run_scenario(
                 # expected result. Catches "fake passes" where commands ran but
                 # nothing meaningful happened in SF.
                 if step_result.passed and step_result.screenshot_path:
-                    page.wait_for_timeout(400)  # let page settle before verify shot
-                    page.screenshot(path=step_result.screenshot_path, full_page=False)
                     # Use override if present — for cases where the test script's
                     # expected_result no longer matches the actual SF UI.
                     expected = expected_overrides.get(step.step_id) or step.expected_result
