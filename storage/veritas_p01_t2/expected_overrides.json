@@ -1,5 +1,9 @@
 {
   "RCM-RC-101": {
     "RCM-RC-101-04": "The 'Copy Position' confirmation dialog is open. It shows the body text about copies inheriting the parent's attributes, a 'Number of positions to copy' field with value 1, and a 'Set To Be Recruited' checkbox that is ticked. OK and Cancel buttons are visible at the bottom. (SF auto-inherits Title/Department/Location/Cost Center from the source position — there are no manual input fields.)"
+  },
+  "LOGIN-102": {
+    "LOGIN-102-03": "The proxy was successfully applied. The top-right avatar now shows the target employee's initials instead of the original user's. The home page belongs to the target employee — their personalised greeting, their pending approvals/requisitions, their tile dashboard. (Successful proxy redirects straight to the target's home; there is no intermediate 'search results' page.)",
+    "LOGIN-102-04": "User is operating as the target employee. The avatar shows their initials and any visible dashboards / inboxes / requisitions belong to that employee. The login was successful and the proxy session is active."
   }
 }
