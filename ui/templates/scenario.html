@@ -157,6 +157,36 @@
   let _selectedStep = null;
   let _pollTimer = null;
 
+  // On load: check if a run is already paused or running and resume polling
+  (async function _checkOnLoad() {
+    const data = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
+    if (data.status === 'paused') {
+      const btn = document.getElementById('run-btn');
+      const label = document.getElementById('run-label');
+      btn.disabled = true;
+      label.textContent = 'Waiting for your fix…';
+      _showPauseOverlay(data);
+      // Keep polling so we detect when it resumes/finishes
+      _pollTimer = setInterval(async () => {
+        const d = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
+        if (d.status === 'done') { clearInterval(_pollTimer); window.location.reload(); }
+        else if (d.status === 'running' && _pauseOverlay) {
+          document.body.removeChild(_pauseOverlay); _pauseOverlay = null;
+        }
+      }, 3000);
+    } else if (data.status === 'running') {
+      const btn = document.getElementById('run-btn');
+      const label = document.getElementById('run-label');
+      btn.disabled = true;
+      label.textContent = 'Running…';
+      _pollTimer = setInterval(async () => {
+        const d = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
+        if (d.status === 'done') { clearInterval(_pollTimer); window.location.reload(); }
+        else if (d.status === 'paused') { label.textContent = 'Waiting for your fix…'; _showPauseOverlay(d); }
+      }, 3000);
+    }
+  })();
+
   // ── Click-to-train screenshot ────────────────────────────────────────────────
   const _trainImg = document.getElementById('train-img');
   const _trainWrap = document.getElementById('train-img-wrap');
