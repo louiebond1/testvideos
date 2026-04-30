@@ -311,6 +311,26 @@ def analyse_scenario_route(scenario_id: str):
         return placeholder in fb  # only ask if feedback uses this placeholder
     analysis["questions"] = [q for q in analysis.get("questions", []) if _needs_question(q)]
 
+    # Bulletproof fallback: scan every step's feedback for {{placeholder}} markers
+    # and ensure each one has a question. If Claude's analyser missed it (or named
+    # the key slightly differently), we still ask. Without this, a step with
+    # TYPE: {{target_employee_name}} would type the literal placeholder text.
+    import re as _re
+    covered_keys = {q.get("key") for q in analysis["questions"]}
+    for step_id, fb in existing_feedback.items():
+        for match in _re.findall(r"\{\{(\w+)\}\}", fb or ""):
+            if match in covered_keys:
+                continue
+            covered_keys.add(match)
+            # Generate a friendly question from the key name
+            human = match.replace("_", " ").strip().capitalize()
+            analysis["questions"].append({
+                "step_id": step_id,
+                "key": match,
+                "question": f"{human}?",
+                "default": "",
+            })
+
     return JSONResponse(analysis)
 
 
