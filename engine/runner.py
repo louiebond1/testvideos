@@ -328,6 +328,7 @@ def _has_direct_commands(feedback: str) -> bool:
 
 def _run_direct_commands(page: Page, step, output_dir: str, feedback: str, t0: float) -> StepResult:
     """Execute a step using direct commands written in the feedback box."""
+    current_cmd = ""
     try:
         for line in feedback.strip().splitlines():
             line = line.strip()
@@ -338,6 +339,7 @@ def _run_direct_commands(page: Page, step, output_dir: str, feedback: str, t0: f
             cmd, _, arg = line.partition(":")
             cmd = cmd.strip().upper()
             arg = arg.strip()
+            current_cmd = f"{cmd}: {arg[:60]}"
 
             if cmd == "CLICK":
                 page.get_by_text(arg, exact=False).first.click(timeout=8_000)
@@ -383,11 +385,13 @@ def _run_direct_commands(page: Page, step, output_dir: str, feedback: str, t0: f
     except Exception as exc:
         shot = os.path.join(output_dir, f"{step.step_id}_fail.png")
         try:
+            page.wait_for_timeout(300)  # brief settle so screenshot reflects real state
             page.screenshot(path=shot, full_page=False)
         except Exception:
             shot = ""
+        err = f"[{current_cmd}] {exc}" if current_cmd else str(exc)
         return StepResult(step_id=step.step_id, passed=False,
-                          error_message=str(exc),
+                          error_message=err,
                           duration_s=round(time.time() - t0, 2), screenshot_path=shot)
 
 
