@@ -11,5 +11,9 @@
     "LOGIN-102-02": "CLICK: Proxy Now\nWAIT: 3000",
     "LOGIN-102-03": "TYPE: {{target_employee_name}}\nWAIT: 3000\nPRESS: ArrowDown\nWAIT: 500\nPRESS: Enter\nWAIT: 2000\nCLICK: OK\nWAIT: 5000",
     "LOGIN-102-04": "WAIT: 3000"
+  },
+  "LOGIN-101": {
+    "LOGIN-101-01": "CLICK_XY: 206, 31\nselect frickin home then a module dropdown will appear underneath slect 'recruiting, dont click search for actions or people",
+    "LOGIN-101-02": "CLICK_XY: 200, 24"
   }
 }
