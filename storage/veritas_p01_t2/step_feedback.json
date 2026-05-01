@@ -14,6 +14,7 @@
   },
   "LOGIN-101": {
     "LOGIN-101-01": "CLICK_XY: 206, 31\nselect frickin home then a module dropdown will appear underneath slect 'recruiting, dont click search for actions or people",
-    "LOGIN-101-02": "CLICK_XY: 200, 24"
+    "LOGIN-101-02": "CLICK_XY: 200, 24",
+    "LOGIN-101-03": "CLICK_XY: 228, 636"
   }
 }
