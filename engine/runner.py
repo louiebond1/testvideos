@@ -631,6 +631,17 @@ def _dispatch(page: Page, step) -> None:
         _proxy_login(page, name)
         return
 
+    # ── "Click the module picker" — open the Home dropdown ──────────────────
+    if "click" in action and "module picker" in action and "navigate" not in action:
+        page.locator("button:has-text('Home')").first.click(timeout=10_000)
+        page.wait_for_timeout(1500)
+        return
+
+    # ── "Click any module to navigate" — pick Recruiting as the example ──────
+    if "click" in action and "any module" in action:
+        _module_picker_nav(page, ["Recruiting"])
+        return
+
     # ── Recruiting shortcut — catch any action that mentions navigating to Recruiting ─
     if "recruit" in action and any(k in action for k in ("navigate", "module", "picker", "go to", "open")):
         _module_picker_nav(page, ["Recruiting"])
