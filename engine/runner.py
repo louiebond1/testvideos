@@ -603,6 +603,17 @@ def _dispatch(page: Page, step) -> None:
     action = step.action.lower()
     data = step.test_data or ""
 
+    # ── Observation / verify steps — just confirm state, no browser action ────
+    # Must be checked FIRST before any keyword routing so "locate the module
+    # picker" or "confirm the dropdown is visible" doesn't accidentally trigger
+    # navigation or click logic.
+    _obs = ("locate", "confirm", "verify", "observe", "note that", "check that",
+            "ensure", "should be", "is displayed", "identify", "look for")
+    _act = ("click", "navigate to", "select ", "fill in", "enter ", "type ",
+            "open ", "drag", "scroll", "submit", "proxy")
+    if any(k in action for k in _obs) and not any(k in action for k in _act):
+        return  # Pure observation — screenshot is the evidence, no click needed
+
     # ── Navigate to a URL ──────────────────────────────────────────────────────
     if any(k in action for k in ("navigate to the successfactors", "open your browser", "paste the job posting url")):
         url = _first_url(data) or _first_url(step.action)
@@ -843,7 +854,9 @@ def _nav_destination(action_text: str) -> list[str]:
         action_text,
         re.IGNORECASE,
     )
-    raw = m.group(1).strip() if m else action_text
+    if not m:
+        return []  # No "navigate to" found — not a navigation step
+    raw = m.group(1).strip()
     parts = [p.strip() for p in re.split(r"[→\->/]", raw)]
     # Strip filler words that sometimes leak in; keep substantive module names
     stop_words = {"module picker", "the module picker", "module"}
