@@ -621,11 +621,69 @@ def _dispatch(page: Page, step) -> None:
             page.goto(url, wait_until="networkidle", timeout=30_000)
             return
 
-    # ── Proxy login ───────────────────────────────────────────────────────────
+    # ── Proxy steps — handled individually so each step maps to one action ───
+
+    # Step: "click your name / initials to open dropdown" — click the LB avatar
+    if "click" in action and any(k in action for k in ("your name", "your initials", "top-right", "top right")) and "dropdown" in action:
+        clicked = False
+        for sel in ["[data-component-id*='avatar']", "[aria-label*='avatar' i]",
+                    "[class*='userAvatar']", "button[class*='Avatar']"]:
+            try:
+                page.locator(sel).first.click(timeout=2_000)
+                clicked = True
+                break
+            except Exception:
+                pass
+        if not clicked:
+            page.mouse.click(1240, 40)
+        page.wait_for_timeout(1200)
+        return
+
+    # Step: "select Proxy Now from the dropdown" — just click the menu item
+    if ("proxy now" in action or ("proxy" in action and "select" in action)):
+        for label in ["Proxy Now", "Proxy now", "Act as Proxy", "Switch User"]:
+            try:
+                page.get_by_text(label, exact=False).first.click(timeout=5_000)
+                page.wait_for_timeout(1000)
+                return
+            except Exception:
+                pass
+        raise RuntimeError("Could not find 'Proxy Now' in the dropdown")
+
+    # Step: "type the full name ... and select from results"
+    if "type" in action and any(k in action for k in ("full name", "proxy", "target user", "wish to proxy")):
+        name = data.strip() if data and not data.lower().startswith("input") else ""
+        if not name:
+            name = "Alex Brackley"  # fallback — set in feedback with TYPE: Name to override
+        # Focus the search input inside the dialog
+        for sel in ["input[type='text']:visible", "input[placeholder*='name' i]",
+                    "input[placeholder*='search' i]", "input[placeholder*='user' i]", "input"]:
+            try:
+                page.locator(sel).first.click(timeout=2_000)
+                break
+            except Exception:
+                pass
+        page.keyboard.type(name, delay=80)
+        page.wait_for_timeout(2500)
+        page.get_by_text(name, exact=False).first.click(timeout=8_000)
+        page.wait_for_timeout(500)
+        return
+
+    # Step: "click OK / confirm the proxy" — click the confirm button
+    if "click" in action and any(k in action for k in ("ok", "confirm", "begin proxy", "start proxy")):
+        for label in ["OK", "Confirm", "Begin Proxy", "Apply"]:
+            try:
+                page.get_by_role("button", name=label).first.click(timeout=5_000)
+                page.wait_for_load_state("networkidle", timeout=30_000)
+                return
+            except Exception:
+                pass
+        raise RuntimeError("Could not find OK/Confirm button for proxy")
+
+    # Fallback: full proxy flow in one shot (legacy path)
     if "proxy" in action:
         name = data.strip() or _first_quoted(step.action) or _word_after_click(step.action)
-        if not name:
-            # Try extracting "as <Name>" pattern
+        if not name or name.lower().startswith("input"):
             m = re.search(r"\bas\s+([A-Z][a-zA-Z ]{2,40})", step.action)
             name = m.group(1).strip() if m else "Alex Brackley"
         _proxy_login(page, name)

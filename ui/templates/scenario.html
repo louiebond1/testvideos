@@ -261,13 +261,19 @@
     return bar;
   }
 
+  let _lastPausedStep = null;
+
   function _showFailureBar(state) {
     _currentPauseState = state;
     const bar = _ensureFailureBar();
     document.getElementById('fb-step-id').textContent = state.paused_step || '';
     document.getElementById('fb-error').textContent = state.error_message || 'Step failed — see screenshot';
     document.getElementById('fb-status').style.display = 'none';
-    document.getElementById('fb-description').value = '';
+    // Only clear the text box when a NEW step fails — never wipe while user is typing
+    if (state.paused_step !== _lastPausedStep) {
+      document.getElementById('fb-description').value = '';
+      _lastPausedStep = state.paused_step;
+    }
     const linkEl = document.getElementById('fb-screenshot-link');
     if (state.screenshot_url) {
       linkEl.innerHTML = `<a href="${state.screenshot_url}" target="_blank" style="color:#3b82f6;text-decoration:underline;">Open screenshot in new tab</a>`;
