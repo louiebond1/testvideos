@@ -71,6 +71,28 @@
           for DOM snapshots, network calls and console logs at every action.
         </p>
         {% endif %}
+
+        <!-- ── Approve / reject ── -->
+        <div class="mt-4 flex gap-2">
+          {% if approved %}
+          <span class="flex-1 text-center text-xs text-emerald-600 font-medium py-2 bg-emerald-50 rounded-lg border border-emerald-100">
+            Locked — runner uses this exact approach every time
+          </span>
+          <button onclick="unapproveRun()"
+                  class="px-4 py-2 text-xs font-semibold text-rose-600 border border-rose-200 hover:bg-rose-50 rounded-lg transition">
+            Mark as wrong
+          </button>
+          {% else %}
+          <button onclick="approveRun()"
+                  class="flex-1 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition">
+            ✓ This is correct — lock it in
+          </button>
+          <button onclick="unapproveRun()"
+                  class="px-4 py-2 text-xs font-semibold text-slate-400 border border-slate-200 hover:bg-slate-50 rounded-lg transition">
+            ✗ Wrong
+          </button>
+          {% endif %}
+        </div>
       </div>
 
       <!-- Feedback panel -->
@@ -585,6 +607,16 @@
         resolve(answers);
       });
     });
+  }
+
+  // ── Approve / unapprove ─────────────────────────────────────────────────────
+  async function approveRun() {
+    const res = await fetch(`/api/scenario/${SCENARIO_ID}/approve`, { method: 'POST' });
+    if (res.ok) window.location.reload();
+  }
+  async function unapproveRun() {
+    const res = await fetch(`/api/scenario/${SCENARIO_ID}/unapprove`, { method: 'POST' });
+    if (res.ok) window.location.reload();
   }
 
   // ── Run button ──────────────────────────────────────────────────────────────
