@@ -278,10 +278,11 @@ def scenario_detail(request: Request, scenario_id: str):
         shots = sorted(run.glob(f"{scenario_id}-*.png"))
         if not shots:
             continue
-        # Only surface this run if every step passed — no _fail screenshots
-        if any("_fail" in s.stem for s in shots):
-            continue
         videos = sorted(run.glob("*.webm"))
+        # Skip runs with no video AND no non-fail screenshots (incomplete abandoned runs)
+        non_fail_shots = [s for s in shots if "_fail" not in s.stem]
+        if not videos and not non_fail_shots:
+            continue
         trace = run / "trace.zip"
         latest_run = {
             "id": run.name,
