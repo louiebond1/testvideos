@@ -11,6 +11,7 @@
     <span class="text-slate-900 font-medium font-mono text-xs">{{ scenario.scenario_id }}</span>
   </nav>
   <div class="flex items-center gap-3">
+    <button id="cancel-btn" onclick="cancelRun()" class="hidden text-xs text-slate-400 hover:text-rose-500 underline transition">Reset</button>
     <button id="run-btn" onclick="startRun()"
             class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
       <svg id="run-icon" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -30,6 +31,18 @@
     <p class="text-slate-500 mt-1 text-sm">{{ scenario.steps|length }} steps · Module {{ scenario.module }}</p>
 
     <div id="run-error" class="hidden mt-4 p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs font-mono text-rose-700"></div>
+
+    <!-- ── Live run progress ── -->
+    <div id="live-panel" style="display:none" class="mt-6 bg-white border border-slate-200 rounded-xl p-4">
+      <h3 class="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+        <span id="live-spinner" style="width:8px;height:8px;border-radius:50%;background:#3b82f6;display:inline-block;animation:lp-pulse 1s infinite;"></span>
+        <span id="live-title">Running…</span>
+      </h3>
+      <div id="live-steps"></div>
+    </div>
+    <style>@keyframes lp-pulse{0%,100%{opacity:1}50%{opacity:.3}}</style>
+
+    <!-- failure panel placeholder (actual panel is fixed-bottom, injected by JS) -->
 
     {% if run %}
     <!-- ── Video + Feedback panel ── -->
@@ -51,22 +64,13 @@
         {% else %}
         <p class="text-sm text-slate-500 italic">No video recorded for this run.</p>
         {% endif %}
-        <!-- Approve / reject -->
-        <div class="mt-3 flex gap-2" id="approve-bar">
-          {% if approved %}
-          <span class="flex-1 text-center text-xs text-emerald-600 font-medium py-2">This run is locked as correct. Future runs use the same approach.</span>
-          <button onclick="unapproveRun()" class="px-4 py-2 text-xs font-semibold text-rose-600 border border-rose-200 hover:bg-rose-50 rounded-lg transition">Mark as wrong</button>
-          {% else %}
-          <button onclick="approveRun()"
-                  class="flex-1 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition">
-            ✓ This is correct — lock it in
-          </button>
-          <button onclick="unapproveRun()"
-                  class="px-4 py-2 text-xs font-semibold text-slate-500 border border-slate-200 hover:bg-slate-50 rounded-lg transition">
-            ✗ Wrong
-          </button>
-          {% endif %}
-        </div>
+        {% if run.trace_url %}
+        <p class="text-xs text-slate-500 mt-3">
+          Frame-by-frame replay: <a href="{{ run.trace_url }}" download class="text-violet-600 underline">download trace.zip</a>
+          → drop into <a href="https://trace.playwright.dev" target="_blank" class="text-violet-600 underline">trace.playwright.dev</a>
+          for DOM snapshots, network calls and console logs at every action.
+        </p>
+        {% endif %}
       </div>
 
       <!-- Feedback panel -->
@@ -108,7 +112,7 @@
           </div>
 
           <textarea id="feedback-text" rows="3"
-                    placeholder="Click the screenshot above to add click points, or type commands:&#10;SHADOW_CLICK: Recruiting&#10;CLICK_XY: 500, 350&#10;TYPE: Alex Brackley&#10;PRESS: Enter&#10;WAIT: 1000"
+                    placeholder="Click the screenshot above to add click points, or type commands:&#10;NAVIGATE: Recruiting&#10;SHADOW_CLICK: Position Org Chart&#10;CLICK_XY: 500, 350&#10;TYPE: Alex Brackley&#10;PRESS: Enter&#10;WAIT: 1000&#10;JS: document.querySelector('input[type=checkbox]').click()"
                     class="w-full text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-400 transition"></textarea>
           <button onclick="saveAndRetry()"
                   id="retry-btn"
@@ -177,6 +181,350 @@
   const STEP_SCREENSHOTS = {{ step_screenshots | tojson }};
   let _selectedStep = null;
   let _pollTimer = null;
+  let _stepPollTimer = null;
+  let _currentPauseState = null;
+
+  // ── Fixed-bottom failure bar ─────────────────────────────────────────────────
+  // Injected once into DOM on first use, shown/hidden via style.display
+  let _failureBar = null;
+
+  function _ensureFailureBar() {
+    if (_failureBar) return _failureBar;
+    const bar = document.createElement('div');
+    bar.id = 'failure-bar';
+    bar.style.cssText = [
+      'display:none',
+      'position:fixed',
+      'bottom:0','left:0','right:0',
+      'z-index:9000',
+      'box-shadow:0 -4px 32px rgba(0,0,0,0.4)',
+      'font-family:system-ui,sans-serif',
+    ].join(';');
+    bar.innerHTML = `
+      <div id="fb-header" style="background:#b91c1c;padding:12px 20px;display:flex;align-items:center;gap:10px;">
+        <span style="width:10px;height:10px;background:#fff;border-radius:50%;display:inline-block;flex-shrink:0;animation:fb-pulse 1s infinite;"></span>
+        <span style="color:#fff;font-size:15px;font-weight:800;flex:1;">STEP FAILED — <span id="fb-step-id" style="font-family:monospace;font-weight:600;font-size:13px;"></span></span>
+        <button onclick="document.getElementById('fb-detail').style.display=document.getElementById('fb-detail').style.display==='none'?'block':'none'"
+          style="background:rgba(255,255,255,0.2);border:none;color:#fff;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px;margin-right:8px;">Toggle detail</button>
+        <button onclick="window._cancelAndHideBar()"
+          style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.3);color:#fff;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px;">Dismiss</button>
+      </div>
+      <div id="fb-detail" style="background:#fef2f2;border-top:3px solid #7f1d1d;padding:16px 20px;">
+        <p style="font-size:12px;font-weight:700;color:#991b1b;margin:0 0 4px;">Error:</p>
+        <p id="fb-error" style="font-size:11px;font-family:monospace;background:#fee2e2;padding:8px 12px;border-radius:6px;color:#7f1d1d;word-break:break-all;margin:0 0 14px;max-height:80px;overflow:auto;"></p>
+        <div style="display:flex;gap:10px;align-items:flex-start;">
+          <div style="flex:1;">
+            <p style="font-size:12px;font-weight:700;color:#374151;margin:0 0 4px;">How to fix it <span style="font-weight:400;color:#9ca3af;">(type in plain English — Claude reads this)</span></p>
+            <textarea id="fb-description" rows="2"
+              placeholder="e.g. The button is top right of the popup, says Accept. Click it."
+              style="width:100%;font-size:13px;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;resize:none;outline:none;font-family:sans-serif;box-sizing:border-box;"></textarea>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;padding-top:20px;">
+            <button onclick="window.sendTextFix()"
+              style="background:#dc2626;color:#fff;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">
+              ✓ Send fix
+            </button>
+            <button onclick="window.openFixModal()"
+              style="background:#1e1b4b;color:#fff;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">
+              📸 Circle it
+            </button>
+          </div>
+        </div>
+        <p id="fb-status" style="display:none;font-size:12px;color:#16a34a;font-weight:600;margin:8px 0 0;text-align:center;"></p>
+        <p id="fb-screenshot-link" style="font-size:11px;color:#6b7280;margin:8px 0 0;"></p>
+      </div>
+      <style>@keyframes fb-pulse{0%,100%{opacity:1}50%{opacity:.2}}</style>`;
+    document.body.appendChild(bar);
+    _failureBar = bar;
+    return bar;
+  }
+
+  function _showFailureBar(state) {
+    _currentPauseState = state;
+    const bar = _ensureFailureBar();
+    document.getElementById('fb-step-id').textContent = state.paused_step || '';
+    document.getElementById('fb-error').textContent = state.error_message || 'Step failed — see screenshot';
+    document.getElementById('fb-status').style.display = 'none';
+    document.getElementById('fb-description').value = '';
+    const linkEl = document.getElementById('fb-screenshot-link');
+    if (state.screenshot_url) {
+      linkEl.innerHTML = `<a href="${state.screenshot_url}" target="_blank" style="color:#3b82f6;text-decoration:underline;">Open screenshot in new tab</a>`;
+    } else {
+      linkEl.innerHTML = '';
+    }
+    bar.style.display = 'block';
+    document.getElementById('fb-detail').style.display = 'block';
+  }
+
+  function _hideFailureBar() {
+    if (_failureBar) _failureBar.style.display = 'none';
+  }
+
+  window._cancelAndHideBar = function() {
+    _hideFailureBar();
+    cancelRun();
+  };
+
+  // ── Live step panel ──────────────────────────────────────────────────────────
+  function _renderSteps(steps) {
+    const container = document.getElementById('live-steps');
+    if (!container) return;
+    container.innerHTML = steps.map(s => `
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #f1f5f9;">
+        <span style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;
+          background:${s.passed ? '#d1fae5' : '#fee2e2'};color:${s.passed ? '#059669' : '#dc2626'};">
+          ${s.passed ? '✓' : '✗'}
+        </span>
+        <span style="font-size:11px;font-family:monospace;color:#475569;width:110px;flex-shrink:0;">${s.step_id}</span>
+        ${!s.passed && s.error ? `<span style="font-size:11px;color:#dc2626;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${(s.error||'').replace(/"/g,'&quot;')}">${(s.error||'').slice(0,90)}</span>` : ''}
+      </div>`).join('');
+  }
+
+  function _startStepPoll() {
+    if (_stepPollTimer) clearInterval(_stepPollTimer);
+    document.getElementById('live-panel').style.display = 'block';
+    _stepPollTimer = setInterval(async () => {
+      try {
+        const d = await (await fetch(`/api/run/${SCENARIO_ID}/steps`)).json();
+        if (d.steps && d.steps.length) _renderSteps(d.steps);
+        if (d.status === 'done' || d.status === 'error') {
+          clearInterval(_stepPollTimer);
+          const spinner = document.getElementById('live-spinner');
+          spinner.style.background = d.steps && d.steps.filter(s=>!s.passed).length ? '#dc2626' : '#16a34a';
+          spinner.style.animation = 'none';
+          const failed = (d.steps||[]).filter(s=>!s.passed);
+          document.getElementById('live-title').textContent = failed.length
+            ? `Failed on ${failed[failed.length-1].step_id}`
+            : 'All steps passed ✓';
+        }
+      } catch(e) {}
+    }, 2000);
+  }
+
+  function _setRunning() {
+    document.getElementById('run-btn').disabled = true;
+    document.getElementById('run-label').textContent = 'Running…';
+    document.getElementById('cancel-btn').classList.remove('hidden');
+    _startStepPoll();
+  }
+
+  function _setPaused(data) {
+    document.getElementById('run-btn').disabled = true;
+    document.getElementById('run-label').textContent = 'Waiting for your fix…';
+    document.getElementById('cancel-btn').classList.remove('hidden');
+    _showFailureBar(data);
+  }
+
+  function _setIdle() {
+    document.getElementById('run-btn').disabled = false;
+    document.getElementById('run-label').textContent = 'Run scenario';
+    document.getElementById('cancel-btn').classList.add('hidden');
+    _hideFailureBar();
+  }
+
+  async function cancelRun() {
+    await fetch(`/api/run/${SCENARIO_ID}/cancel`, { method: 'POST' });
+    if (_pollTimer) clearInterval(_pollTimer);
+    if (_stepPollTimer) clearInterval(_stepPollTimer);
+    _setIdle();
+  }
+
+  // On load: show last run steps from disk
+  (async function _loadLastRun() {
+    try {
+      const d = await (await fetch(`/api/run/${SCENARIO_ID}/steps`)).json();
+      if (d.steps && d.steps.length) {
+        document.getElementById('live-panel').style.display = 'block';
+        _renderSteps(d.steps);
+        const failed = d.steps.filter(s => !s.passed);
+        const spinner = document.getElementById('live-spinner');
+        spinner.style.animation = 'none';
+        spinner.style.background = failed.length ? '#dc2626' : '#16a34a';
+        // If run is currently paused, don't claim "all steps passed" — status check below will handle title
+        if (d.status !== 'running' && d.status !== 'paused') {
+          document.getElementById('live-title').textContent = failed.length
+            ? `Last run — stopped at ${failed[failed.length-1].step_id}`
+            : 'Last run — all steps passed ✓';
+        }
+      }
+    } catch(e) {}
+  })();
+
+  // On load: check for active paused/running run
+  (async function _checkOnLoad() {
+    try {
+      const data = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
+      if (data.status === 'paused') {
+        document.getElementById('live-title').textContent = `Paused — waiting for fix on ${data.paused_step || ''}`;
+        _setPaused(data);
+        _pollTimer = setInterval(async () => {
+          try {
+            const d = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
+            if (d.status === 'done') { clearInterval(_pollTimer); window.location.reload(); }
+            else if (d.status === 'idle') { clearInterval(_pollTimer); _setIdle(); }
+            else if (d.status === 'paused') _showFailureBar(d);
+          } catch(e) {}
+        }, 3000);
+      } else if (data.status === 'running') {
+        _setRunning();
+        _pollTimer = setInterval(async () => {
+          try {
+            const d = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
+            if (d.status === 'done') { clearInterval(_pollTimer); window.location.reload(); }
+            else if (d.status === 'paused') { clearInterval(_pollTimer); _setPaused(d); }
+            else if (d.status === 'idle') { clearInterval(_pollTimer); _setIdle(); }
+          } catch(e) {}
+        }, 3000);
+      }
+    } catch(e) {}
+  })();
+
+  // ── Send fix (text → Claude → commands → resume) ────────────────────────────
+  async function _sendFix(commands, comment) {
+    document.getElementById('fb-status').textContent = 'Sending fix…';
+    document.getElementById('fb-status').style.display = 'block';
+    const res = await fetch(`/api/run/${SCENARIO_ID}/resume`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({commands, comment, save_feedback: true}),
+    });
+    if (res.ok) {
+      document.getElementById('fb-status').textContent = 'Fix sent — resuming run…';
+      document.getElementById('run-label').textContent = 'Running…';
+      _startStepPoll();
+    } else {
+      document.getElementById('fb-status').textContent = 'Error sending fix — try again';
+    }
+  }
+
+  window.sendTextFix = async function() {
+    const description = document.getElementById('fb-description').value.trim();
+    if (!description) { alert('Describe the fix first'); return; }
+    const statusEl = document.getElementById('fb-status');
+    statusEl.textContent = 'Asking Claude to interpret your description…';
+    statusEl.style.display = 'block';
+
+    let commands = '';
+    try {
+      const r = await fetch(`/api/interpret-fix/${SCENARIO_ID}`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          description,
+          screenshot_url: _currentPauseState?.screenshot_url || '',
+          step_id: _currentPauseState?.paused_step || '',
+        }),
+      });
+      const body = await r.json();
+      commands = body.commands || '';
+      if (commands) {
+        statusEl.textContent = `Claude says: ${commands.split('\n').join(' | ')} — sending…`;
+      }
+    } catch(e) {
+      statusEl.textContent = 'Could not reach Claude — sending description as comment…';
+    }
+    await _sendFix(commands, description);
+  };
+
+  window.submitFixText = window.sendTextFix;  // alias
+
+  // ── Circle-on-screenshot modal ───────────────────────────────────────────────
+  window.openFixModal = function() {
+    const state = _currentPauseState;
+    if (!state) return;
+    const shotUrl = state.screenshot_url || '';
+
+    const modal = document.createElement('div');
+    modal.id = 'fix-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.88);display:flex;flex-direction:column;';
+    modal.innerHTML = `
+      <div style="background:#111;border-bottom:1px solid #333;padding:12px 20px;display:flex;align-items:center;gap:12px;flex-shrink:0;">
+        <span style="color:#f87171;font-weight:700;font-size:14px;">⚠ ${state.paused_step||''} — draw a circle where it should click</span>
+        <button onclick="document.body.removeChild(document.getElementById('fix-modal'))"
+          style="margin-left:auto;background:transparent;border:1px solid #444;color:#aaa;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px;">✕ Close</button>
+      </div>
+      <div style="flex:1;display:flex;overflow:hidden;">
+        <div style="flex:1;overflow:auto;position:relative;cursor:crosshair;background:#000;" id="fm-wrap">
+          <img id="fm-img" src="${shotUrl}" style="max-width:100%;display:block;" draggable="false"/>
+          <canvas id="fm-canvas" style="position:absolute;top:0;left:0;pointer-events:none;"></canvas>
+        </div>
+        <div style="width:280px;flex-shrink:0;background:#1a1a1a;border-left:1px solid #222;padding:16px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;">
+          <p style="color:#9ca3af;font-size:11px;margin:0;">Draw a circle around where it should click. A CLICK_XY command will be generated.</p>
+          <div style="background:#000;border:1px solid #333;border-radius:6px;padding:8px;">
+            <div style="color:#6b7280;font-size:10px;margin-bottom:2px;">Generated command:</div>
+            <div id="fm-generated" style="color:#22c55e;font-size:13px;font-weight:700;word-break:break-all;min-height:18px;"></div>
+          </div>
+          <textarea id="fm-extra" rows="4" placeholder="Extra commands after the click:&#10;WAIT: 1000&#10;CLICK: OK&#10;TYPE: text"
+            style="background:#111;color:#e5e7eb;border:1px solid #333;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;resize:vertical;outline:none;"></textarea>
+          <button onclick="window._clearFmCircle()"
+            style="background:transparent;color:#6b7280;border:1px solid #333;border-radius:6px;padding:5px;font-size:11px;cursor:pointer;">Clear drawing</button>
+          <button onclick="window._submitFixFromModal()"
+            style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;">
+            Send fix — resume run
+          </button>
+          <p id="fm-status" style="color:#22c55e;font-size:11px;text-align:center;display:none;"></p>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    const img = modal.querySelector('#fm-img');
+    const wrap = modal.querySelector('#fm-wrap');
+    const canvas = modal.querySelector('#fm-canvas');
+    const ctx = canvas.getContext('2d');
+    let drawing = false, pts = [], lastCoord = null;
+
+    function resizeCanvas() {
+      const r = img.getBoundingClientRect();
+      canvas.width = r.width; canvas.height = r.height;
+      canvas.style.width = r.width + 'px'; canvas.style.height = r.height + 'px';
+    }
+    img.addEventListener('load', resizeCanvas);
+    if (img.complete) setTimeout(resizeCanvas, 100);
+
+    wrap.addEventListener('mousedown', e => {
+      if (e.target !== img && e.target !== canvas) return;
+      drawing = true; pts = []; canvas.style.pointerEvents = 'auto';
+    });
+    wrap.addEventListener('mousemove', e => {
+      if (!drawing) return;
+      const r = img.getBoundingClientRect();
+      pts.push({x: e.clientX - r.left, y: e.clientY - r.top});
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.beginPath(); ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 3;
+      ctx.shadowColor = '#ef4444'; ctx.shadowBlur = 6;
+      pts.forEach((p,i) => i ? ctx.lineTo(p.x,p.y) : ctx.moveTo(p.x,p.y));
+      ctx.stroke();
+    });
+    wrap.addEventListener('mouseup', () => {
+      if (!drawing || pts.length < 2) return;
+      drawing = false; canvas.style.pointerEvents = 'none';
+      const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
+      const cx = (Math.min(...xs)+Math.max(...xs))/2, cy = (Math.min(...ys)+Math.max(...ys))/2;
+      const r = img.getBoundingClientRect();
+      const sfX = Math.round(cx*1280/r.width), sfY = Math.round(cy*720/r.height);
+      lastCoord = {sfX, sfY};
+      modal.querySelector('#fm-generated').textContent = `CLICK_XY: ${sfX}, ${sfY}`;
+      ctx.beginPath(); ctx.strokeStyle = '#facc15'; ctx.lineWidth = 2;
+      ctx.moveTo(cx-10,cy); ctx.lineTo(cx+10,cy); ctx.moveTo(cx,cy-10); ctx.lineTo(cx,cy+10); ctx.stroke();
+    });
+
+    window._clearFmCircle = () => {
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      modal.querySelector('#fm-generated').textContent = ''; lastCoord = null;
+    };
+
+    window._submitFixFromModal = async () => {
+      const generated = lastCoord ? `CLICK_XY: ${lastCoord.sfX}, ${lastCoord.sfY}` : '';
+      const extra = modal.querySelector('#fm-extra').value.trim();
+      const description = document.getElementById('fb-description').value.trim();
+      const commands = [generated, extra].filter(Boolean).join('\n');
+      if (!commands) { alert('Draw a circle first or type commands in the box'); return; }
+      modal.querySelector('#fm-status').style.display = 'block';
+      modal.querySelector('#fm-status').textContent = 'Sending…';
+      await _sendFix(commands, description);
+      document.body.removeChild(modal);
+    };
+  };
 
   // ── Click-to-train screenshot ────────────────────────────────────────────────
   const _trainImg = document.getElementById('train-img');
@@ -185,47 +533,58 @@
 
   _trainWrap.addEventListener('click', (e) => {
     const rect = _trainImg.getBoundingClientRect();
-    // Screenshots are always 1280×720
     const x = Math.round((e.clientX - rect.left) * (1280 / rect.width));
-    const y = Math.round((e.clientY - rect.top)  * (720  / rect.height));
-
-    // Append command to textarea
+    const y = Math.round((e.clientY - rect.top)  * (720 / rect.height));
     const ta = document.getElementById('feedback-text');
     ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') + `CLICK_XY: ${x}, ${y}`;
-
-    // Draw a red dot at the clicked position
     const dot = document.createElement('div');
     dot.className = 'absolute pointer-events-none';
-    dot.style.cssText = `
-      left: ${(e.clientX - rect.left) / rect.width * 100}%;
-      top:  ${(e.clientY - rect.top)  / rect.height * 100}%;
-      transform: translate(-50%,-50%);
-      width: 18px; height: 18px;
-      background: #ef4444; border: 2px solid white;
-      border-radius: 50%; box-shadow: 0 0 0 2px #ef4444;
-    `;
-    const label = document.createElement('span');
-    label.className = 'absolute left-5 top-0 text-[10px] font-mono text-white bg-red-500 px-1 rounded whitespace-nowrap';
-    label.textContent = `${x}, ${y}`;
-    dot.appendChild(label);
+    dot.style.cssText = `left:${(e.clientX-rect.left)/rect.width*100}%;top:${(e.clientY-rect.top)/rect.height*100}%;transform:translate(-50%,-50%);width:18px;height:18px;background:#ef4444;border:2px solid white;border-radius:50%;box-shadow:0 0 0 2px #ef4444;`;
+    const lbl = document.createElement('span');
+    lbl.className = 'absolute left-5 top-0 text-[10px] font-mono text-white bg-red-500 px-1 rounded whitespace-nowrap';
+    lbl.textContent = `${x}, ${y}`;
+    dot.appendChild(lbl);
     _trainDots.appendChild(dot);
   });
 
   function clearDots() {
     _trainDots.innerHTML = '';
-    // Strip CLICK_XY lines from textarea
     const ta = document.getElementById('feedback-text');
     ta.value = ta.value.split('\n').filter(l => !l.trim().startsWith('CLICK_XY')).join('\n').trim();
   }
 
-  // ── Approve / unapprove ─────────────────────────────────────────────────────
-  async function approveRun() {
-    const res = await fetch(`/api/scenario/${SCENARIO_ID}/approve`, { method: 'POST' });
-    if (res.ok) window.location.reload();
-  }
-  async function unapproveRun() {
-    const res = await fetch(`/api/scenario/${SCENARIO_ID}/unapprove`, { method: 'POST' });
-    if (res.ok) window.location.reload();
+  // ── Pre-run questions overlay ────────────────────────────────────────────────
+  async function _showQuestionsIfNeeded() {
+    const analysis = await (await fetch(`/api/analyse/${SCENARIO_ID}`)).json();
+    const questions = (analysis.questions || []).filter(q => !q.default);
+    if (!questions.length) return {};
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;`;
+      const box = document.createElement('div');
+      box.style.cssText = `background:#fff;border-radius:12px;padding:28px;max-width:480px;width:90%;`;
+      box.innerHTML = `
+        <h2 style="font-size:16px;font-weight:700;margin-bottom:4px;">Before we start</h2>
+        <p style="font-size:12px;color:#6b7280;margin-bottom:16px;">Answer these so the script knows what to use.</p>
+        ${questions.map(q => `
+          <div style="margin-bottom:12px;">
+            <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:4px;">${q.question}</label>
+            <input id="q-${q.key}" type="text" value="${q.default||''}" placeholder="Type here…"
+              style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:7px 10px;font-size:13px;outline:none;">
+          </div>`).join('')}
+        <button onclick="this.closest('[style]').dispatchEvent(new CustomEvent('submit',{bubbles:true}))"
+          style="width:100%;background:#111;color:#fff;border:none;border-radius:8px;padding:10px;font-size:14px;font-weight:600;cursor:pointer;margin-top:4px;">
+          Start run
+        </button>`;
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('submit', () => {
+        const answers = {};
+        questions.forEach(q => { answers[q.key] = document.getElementById(`q-${q.key}`).value.trim(); });
+        document.body.removeChild(overlay);
+        resolve(answers);
+      });
+    });
   }
 
   // ── Run button ──────────────────────────────────────────────────────────────
@@ -233,12 +592,27 @@
     const btn = document.getElementById('run-btn');
     const label = document.getElementById('run-label');
     btn.disabled = true;
+    label.textContent = 'Checking…';
+
+    const answers = await _showQuestionsIfNeeded();
+
     label.textContent = 'Running…';
-    const res = await fetch(`/api/run/${SCENARIO_ID}`, { method: 'POST' });
+    const res = await fetch(`/api/run/${SCENARIO_ID}`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(answers),
+    });
     if (!res.ok) { label.textContent = 'Failed to start'; btn.disabled = false; return; }
     _pollTimer = setInterval(async () => {
       const data = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
       if (data.status === 'done') { clearInterval(_pollTimer); window.location.reload(); }
+      else if (data.status === 'paused') {
+        label.textContent = 'Waiting for your fix…';
+        _showPauseOverlay(data);
+      }
+      else if (data.status === 'running' && _pauseOverlay) {
+        // resumed — overlay already removed by _submitFix
+      }
       else if (data.status === 'error') {
         clearInterval(_pollTimer);
         label.textContent = 'Error';
