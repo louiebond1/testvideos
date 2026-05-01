@@ -728,6 +728,30 @@ def click_trainer(scenario_id: str, step_id: str):
 </html>""")
 
 
+@app.post("/api/scenario/{scenario_id}/approve")
+def approve_scenario(scenario_id: str):
+    """Lock the current feedback as the golden playbook — used on every future run."""
+    feedback = _load_feedback().get(scenario_id, {})
+    approved = _load_approved()
+    approved[scenario_id] = {
+        "approved_at": datetime.utcnow().isoformat(),
+        "step_commands": feedback,
+    }
+    _save_approved(approved)
+    threading.Thread(target=_git_push_approved, daemon=True).start()
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/scenario/{scenario_id}/unapprove")
+def unapprove_scenario(scenario_id: str):
+    """Remove the golden playbook so the scenario goes back to normal mode."""
+    approved = _load_approved()
+    approved.pop(scenario_id, None)
+    _save_approved(approved)
+    threading.Thread(target=_git_push_approved, daemon=True).start()
+    return JSONResponse({"ok": True})
+
+
 @app.post("/api/step-feedback")
 def set_step_feedback(
     scenario_id: str = Form(...),
