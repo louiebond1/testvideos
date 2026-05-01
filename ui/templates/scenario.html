@@ -934,7 +934,7 @@
     _refreshShot();
     _refreshTimer = setInterval(_refreshShot, 2000);
 
-    // Click on browser image
+    // Click on browser image — queue the click, screenshot arrives via next poll
     wrap.addEventListener('click', async (e) => {
       if (_busy) return;
       const r = img.getBoundingClientRect();
@@ -942,17 +942,20 @@
       const bx = Math.round((e.clientX - r.left) * (img.naturalWidth / r.width));
       const by = Math.round((e.clientY - r.top) * (img.naturalHeight / r.height));
       _busy = true;
+      // Show a quick flash dot so user knows the click registered
+      const flash = document.createElement('div');
+      flash.style.cssText = `position:absolute;width:18px;height:18px;border-radius:50%;background:#4ade80;opacity:0.9;pointer-events:none;transform:translate(-50%,-50%);transition:opacity 0.4s;`;
+      flash.style.left = (e.clientX - r.left) + 'px';
+      flash.style.top = (e.clientY - r.top) + 'px';
+      wrap.appendChild(flash);
+      setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.remove(), 400); }, 100);
       try {
-        const res = await fetch(`/api/live/${SCENARIO_ID}/click`, {
+        await fetch(`/api/live/${SCENARIO_ID}/click`, {
           method: 'POST',
           headers: {'Content-Type':'application/json'},
           body: JSON.stringify({x: bx, y: by}),
         });
-        if (res.ok) {
-          const blob = await res.blob();
-          img.src = URL.createObjectURL(blob);
-          _recordCmd(`CLICK_XY: ${bx}, ${by}\nWAIT: 1000`, `CLICK_XY: ${bx}, ${by}`);
-        }
+        _recordCmd(`CLICK_XY: ${bx}, ${by}\nWAIT: 1000`, `CLICK_XY: ${bx}, ${by}`);
       } catch(err) {}
       _busy = false;
     });

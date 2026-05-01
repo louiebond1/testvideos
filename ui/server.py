@@ -38,9 +38,10 @@ _ACTIVE_RUNS: dict[str, dict] = {}
 _PAUSE_EVENTS: dict[str, threading.Event] = {}
 _PAUSE_FIX: dict[str, dict | None] = {}
 
-# Live control: scenario_id -> live Playwright page (stored while paused)
-_LIVE_PAGES: dict = {}
-_LIVE_LOCK = threading.Lock()
+# Live control — runner thread owns all Playwright calls while paused.
+# Server just reads screenshot files and appends to the action queue.
+_LIVE_SHOT_PATHS: dict[str, Path] = {}   # scenario_id -> Path of latest PNG
+_LIVE_QUEUES: dict[str, list] = {}       # scenario_id -> list of pending actions
 
 # Force-pause: set by UI to pause the runner before the next step
 _FORCE_PAUSE: dict[str, bool] = {}
@@ -67,7 +68,13 @@ def _humanise_error(raw_error: str) -> str:
 
 
 def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id: str, error_message: str = "", page=None):
-    """Called by runner when a step fails — pauses and waits for human fix."""
+    """Called by runner when a step fails — pauses and waits for human fix.
+
+    If a live page is provided, runs a screenshot+action loop in the CALLING
+    (runner) thread so Playwright is never touched cross-thread.
+    """
+    import time as _time
+
     evt = threading.Event()
     _PAUSE_EVENTS[scenario_id] = evt
     _PAUSE_FIX[scenario_id] = None
@@ -80,13 +87,49 @@ def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id
         "error_message": human_error,
         "raw_error": error_message,
     })
+
     if page is not None:
-        _LIVE_PAGES[scenario_id] = page
-    print(f"  [pause] {scenario_id} paused on {step_id} — waiting up to 10 min for human fix")
-    evt.wait(timeout=600)
+        # Prepare shared paths / queues
+        shot_path = RUNS_DIR / f"{scenario_id}_liveshot.png"
+        _LIVE_SHOT_PATHS[scenario_id] = shot_path
+        _LIVE_QUEUES[scenario_id] = []
+
+        print(f"  [pause] {scenario_id} paused on {step_id} — live control active")
+
+        # Run screenshot + action loop in THIS (runner) thread while waiting.
+        # We poll evt with a short timeout so we can process queued actions.
+        while not evt.wait(timeout=0.8):
+            # Process any pending actions from the UI
+            queue = _LIVE_QUEUES.get(scenario_id, [])
+            while queue:
+                action = queue.pop(0)
+                try:
+                    atype = action.get("type")
+                    if atype == "click":
+                        page.mouse.click(action["x"], action["y"])
+                        page.wait_for_timeout(400)
+                    elif atype == "type":
+                        page.keyboard.type(action["text"], delay=60)
+                        page.wait_for_timeout(300)
+                    elif atype == "key":
+                        page.keyboard.press(action["key"])
+                        page.wait_for_timeout(300)
+                except Exception as _e:
+                    print(f"  [live-action] {_e}")
+            # Take a fresh screenshot
+            try:
+                page.screenshot(path=str(shot_path))
+            except Exception:
+                pass
+
+        _LIVE_SHOT_PATHS.pop(scenario_id, None)
+        _LIVE_QUEUES.pop(scenario_id, None)
+    else:
+        print(f"  [pause] {scenario_id} paused on {step_id} — waiting up to 10 min for human fix")
+        evt.wait(timeout=600)
+
     fix = _PAUSE_FIX.pop(scenario_id, None)
     _PAUSE_EVENTS.pop(scenario_id, None)
-    _LIVE_PAGES.pop(scenario_id, None)
     _ACTIVE_RUNS[scenario_id]["status"] = "running"
     return fix
 
@@ -611,69 +654,41 @@ async def resume_run(scenario_id: str, request: Request):
 
 @app.get("/api/live/{scenario_id}/screenshot")
 def live_screenshot(scenario_id: str):
-    """Return a fresh PNG screenshot of the live browser (while paused)."""
+    """Serve the latest screenshot written by the runner's live-control loop."""
     from fastapi.responses import Response
-    page = _LIVE_PAGES.get(scenario_id)
-    if page is None:
-        raise HTTPException(404, "No live browser for this scenario")
-    with _LIVE_LOCK:
-        try:
-            png = page.screenshot(type="png")
-        except Exception as exc:
-            raise HTTPException(500, str(exc))
-    return Response(content=png, media_type="image/png")
+    shot_path = _LIVE_SHOT_PATHS.get(scenario_id)
+    if not shot_path or not shot_path.exists():
+        raise HTTPException(404, "No live screenshot available — is the run paused?")
+    return Response(content=shot_path.read_bytes(), media_type="image/png")
 
 
 @app.post("/api/live/{scenario_id}/click")
 async def live_click(scenario_id: str, request: Request):
-    """Click at browser-space (x, y) on the live page."""
-    page = _LIVE_PAGES.get(scenario_id)
-    if page is None:
-        raise HTTPException(404, "No live browser for this scenario")
+    """Queue a click for the runner's live loop to execute."""
+    if scenario_id not in _LIVE_QUEUES:
+        raise HTTPException(404, "No live session for this scenario")
     body = await request.json()
-    x, y = int(body["x"]), int(body["y"])
-    with _LIVE_LOCK:
-        try:
-            page.mouse.click(x, y)
-            page.wait_for_timeout(400)
-            png = page.screenshot(type="png")
-        except Exception as exc:
-            raise HTTPException(500, str(exc))
-    from fastapi.responses import Response
-    return Response(content=png, media_type="image/png")
+    _LIVE_QUEUES[scenario_id].append({"type": "click", "x": int(body["x"]), "y": int(body["y"])})
+    return JSONResponse({"ok": True})
 
 
 @app.post("/api/live/{scenario_id}/type")
 async def live_type(scenario_id: str, request: Request):
-    """Type text into the live page."""
-    page = _LIVE_PAGES.get(scenario_id)
-    if page is None:
-        raise HTTPException(404, "No live browser for this scenario")
+    """Queue a type action for the runner's live loop."""
+    if scenario_id not in _LIVE_QUEUES:
+        raise HTTPException(404, "No live session for this scenario")
     body = await request.json()
-    text = body.get("text", "")
-    with _LIVE_LOCK:
-        try:
-            page.keyboard.type(text, delay=60)
-            page.wait_for_timeout(300)
-        except Exception as exc:
-            raise HTTPException(500, str(exc))
+    _LIVE_QUEUES[scenario_id].append({"type": "type", "text": body.get("text", "")})
     return JSONResponse({"ok": True})
 
 
 @app.post("/api/live/{scenario_id}/key")
 async def live_key(scenario_id: str, request: Request):
-    """Press a key on the live page (Enter, ArrowDown, etc.)."""
-    page = _LIVE_PAGES.get(scenario_id)
-    if page is None:
-        raise HTTPException(404, "No live browser for this scenario")
+    """Queue a key press for the runner's live loop."""
+    if scenario_id not in _LIVE_QUEUES:
+        raise HTTPException(404, "No live session for this scenario")
     body = await request.json()
-    key = body.get("key", "")
-    with _LIVE_LOCK:
-        try:
-            page.keyboard.press(key)
-            page.wait_for_timeout(300)
-        except Exception as exc:
-            raise HTTPException(500, str(exc))
+    _LIVE_QUEUES[scenario_id].append({"type": "key", "key": body.get("key", "")})
     return JSONResponse({"ok": True})
 
 
