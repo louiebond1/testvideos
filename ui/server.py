@@ -42,6 +42,9 @@ _PAUSE_FIX: dict[str, dict | None] = {}
 _LIVE_PAGES: dict = {}
 _LIVE_LOCK = threading.Lock()
 
+# Force-pause: set by UI to pause the runner before the next step
+_FORCE_PAUSE: dict[str, bool] = {}
+
 
 def _humanise_error(raw_error: str) -> str:
     """Ask Claude to translate a raw Playwright/Python error into plain English."""
@@ -419,10 +422,14 @@ async def trigger_run(scenario_id: str, request: Request):
                 })
                 _write_step_log(steps_log, "running")
 
+            def _check_pause(sid):
+                return _FORCE_PAUSE.pop(sid, False)
+
             result = run_scenario(scenario, runs_root=RUNS_DIR, headless=True,
                                   pause_callback=lambda **kw: _pause_callback(**kw),
                                   initial_context=pre_answers,
-                                  step_done_callback=_step_done_callback)
+                                  step_done_callback=_step_done_callback,
+                                  check_pause_fn=_check_pause)
             _write_step_log(steps_log, "done")
             _ACTIVE_RUNS[scenario_id] = {
                 "status": "done",
@@ -692,6 +699,72 @@ async def live_done(scenario_id: str, request: Request):
     _PAUSE_FIX[scenario_id] = {"skip": True}
     _PAUSE_EVENTS[scenario_id].set()
     return JSONResponse({"ok": True})
+
+
+@app.post("/api/live/{scenario_id}/request-control")
+async def request_control(scenario_id: str, request: Request):
+    """Set force-pause flag so runner pauses before the next step.
+    If no run is active, starts one first.
+    """
+    body = await request.json()
+    pre_answers = body.get("answers", {})
+
+    status = _ACTIVE_RUNS.get(scenario_id, {}).get("status", "idle")
+
+    if status == "paused":
+        # Already paused — nothing to do, UI will open live control directly
+        return JSONResponse({"ok": True, "status": "paused"})
+
+    # Set the flag — runner will pause before the next step
+    _FORCE_PAUSE[scenario_id] = True
+
+    if status not in ("running",):
+        # Not running — start a fresh run
+        scenarios = _load_scenarios()
+        scenario = next((s for s in scenarios if s.scenario_id == scenario_id), None)
+        if not scenario:
+            raise HTTPException(404, "Scenario not found")
+
+        # Cancel any stuck run first
+        if scenario_id in _PAUSE_EVENTS:
+            _PAUSE_FIX[scenario_id] = None
+            _PAUSE_EVENTS[scenario_id].set()
+
+        run_id = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        _ACTIVE_RUNS[scenario_id] = {"status": "running", "run_id": run_id}
+        step_log_file = RUNS_DIR / f"{scenario_id}_last_run.json"
+
+        def _run():
+            steps_log = []
+            try:
+                def _step_done(step_id, passed, error, screenshot_url):
+                    steps_log.append({"step_id": step_id, "passed": passed,
+                                      "error": error or "", "screenshot_url": screenshot_url or ""})
+                    try:
+                        step_log_file.write_text(json.dumps({"run_id": run_id, "status": "running", "steps": steps_log}, indent=2))
+                    except Exception:
+                        pass
+
+                def _check_pause(sid):
+                    return _FORCE_PAUSE.pop(sid, False)
+
+                result = run_scenario(scenario, runs_root=RUNS_DIR, headless=True,
+                                      pause_callback=lambda **kw: _pause_callback(**kw),
+                                      initial_context=pre_answers,
+                                      step_done_callback=_step_done,
+                                      check_pause_fn=_check_pause)
+                try:
+                    step_log_file.write_text(json.dumps({"run_id": run_id, "status": "done", "steps": steps_log}, indent=2))
+                except Exception:
+                    pass
+                _ACTIVE_RUNS[scenario_id] = {"status": "done", "run_id": result.run_id, "passed": result.passed}
+            except Exception as exc:
+                _ACTIVE_RUNS[scenario_id] = {"status": "error", "run_id": run_id, "error": str(exc)}
+
+        import threading as _t
+        _t.Thread(target=_run, daemon=True).start()
+
+    return JSONResponse({"ok": True, "status": "starting"})
 
 
 def _git_push_feedback():

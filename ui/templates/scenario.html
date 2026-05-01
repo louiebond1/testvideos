@@ -12,6 +12,10 @@
   </nav>
   <div class="flex items-center gap-3">
     <button id="cancel-btn" onclick="cancelRun()" class="hidden text-xs text-slate-400 hover:text-rose-500 underline transition">Reset</button>
+    <button id="control-btn" onclick="takeControlAnytime()"
+            class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition">
+      🎮 <span id="control-label">Take Control</span>
+    </button>
     <button id="run-btn" onclick="startRun()"
             class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
       <svg id="run-icon" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -334,6 +338,7 @@
   }
 
   function _setRunning() {
+    _ACTIVE_RUNS_STATUS = 'running';
     document.getElementById('run-btn').disabled = true;
     document.getElementById('run-label').textContent = 'Running…';
     document.getElementById('cancel-btn').classList.remove('hidden');
@@ -341,6 +346,7 @@
   }
 
   function _setPaused(data) {
+    _ACTIVE_RUNS_STATUS = 'paused';
     document.getElementById('run-btn').disabled = true;
     document.getElementById('run-label').textContent = 'Waiting for your fix…';
     document.getElementById('cancel-btn').classList.remove('hidden');
@@ -348,6 +354,7 @@
   }
 
   function _setIdle() {
+    _ACTIVE_RUNS_STATUS = 'idle';
     document.getElementById('run-btn').disabled = false;
     document.getElementById('run-label').textContent = 'Run scenario';
     document.getElementById('cancel-btn').classList.add('hidden');
@@ -761,6 +768,65 @@
       }
     }, 3000);
   }
+
+  // ── Take Control (any time) ───────────────────────────────────────────────────
+  window.takeControlAnytime = async function() {
+    const status = _ACTIVE_RUNS_STATUS || 'idle';
+
+    if (_currentPauseState && status === 'paused') {
+      // Already paused — just open the live view
+      window.openLiveControl();
+      return;
+    }
+
+    const controlBtn = document.getElementById('control-btn');
+    const controlLabel = document.getElementById('control-label');
+    controlBtn.disabled = true;
+    controlLabel.textContent = 'Requesting…';
+
+    // Get any pre-run answers if idle
+    let answers = {};
+    if (status === 'idle' || status === 'done' || status === 'error') {
+      try { answers = await _showQuestionsIfNeeded(); } catch(e) {}
+    }
+
+    try {
+      await fetch(`/api/live/${SCENARIO_ID}/request-control`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({answers}),
+      });
+    } catch(e) {}
+
+    controlLabel.textContent = 'Waiting for pause…';
+
+    // Poll until paused, then open live control
+    const pollInterval = setInterval(async () => {
+      try {
+        const d = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
+        if (d.status === 'paused') {
+          clearInterval(pollInterval);
+          controlBtn.disabled = false;
+          controlLabel.textContent = 'Take Control';
+          _currentPauseState = d;
+          window.openLiveControl();
+        } else if (d.status === 'done' || d.status === 'error' || d.status === 'idle') {
+          clearInterval(pollInterval);
+          controlBtn.disabled = false;
+          controlLabel.textContent = 'Take Control';
+        }
+      } catch(e) {}
+    }, 1000);
+  };
+
+  // Track current run status for takeControlAnytime
+  let _ACTIVE_RUNS_STATUS = 'idle';
+  (async function _initStatus() {
+    try {
+      const d = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
+      _ACTIVE_RUNS_STATUS = d.status || 'idle';
+    } catch(e) {}
+  })();
 
   // ── Live Control ─────────────────────────────────────────────────────────────
   window.openLiveControl = function() {

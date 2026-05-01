@@ -84,6 +84,7 @@ def run_scenario(
     pause_callback=None,
     initial_context: dict | None = None,
     step_done_callback=None,
+    check_pause_fn=None,
 ) -> ScenarioResult:
     """Login to SF, run all (or first *max_steps*) steps, record video."""
     run_id = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -151,7 +152,32 @@ def run_scenario(
                 if run_context:
                     print(f"  [context] {run_context}")
 
-                step_result = _run_step(page, step, str(runs_dir), feedback=step_feedback)
+                # Check if user has requested manual control before this step runs
+                _force_fix = None
+                if check_pause_fn and check_pause_fn(scenario.scenario_id) and pause_callback:
+                    print(f"  [force-pause] user requested control before {step.step_id}")
+                    try:
+                        _live_shot = str(runs_dir / f"{step.step_id}_live.png")
+                        page.screenshot(path=_live_shot)
+                    except Exception:
+                        _live_shot = ""
+                    _force_fix = pause_callback(
+                        scenario_id=scenario.scenario_id,
+                        step_id=step.step_id,
+                        screenshot_path=_live_shot,
+                        run_id=run_id,
+                        error_message="User requested manual control",
+                        page=page,
+                    )
+
+                if _force_fix and _force_fix.get("skip"):
+                    # User handled this step manually — mark passed, skip auto-run
+                    from models.dataclasses import StepResult as _SR
+                    step_result = _SR(step_id=step.step_id, passed=True, screenshot_path=_live_shot,
+                                     error_message="", duration_s=0.0)
+                else:
+                    step_result = _run_step(page, step, str(runs_dir),
+                                            feedback=_force_fix.get("commands", step_feedback) if _force_fix else step_feedback)
 
                 # Visual verification — confirm the screenshot actually matches the
                 # expected result. Catches "fake passes" where commands ran but
