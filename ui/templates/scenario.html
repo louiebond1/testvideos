@@ -843,18 +843,28 @@
 
     function _refreshShot() {
       const spinner = document.getElementById('lc-spinner');
-      if (spinner) spinner.style.display = 'block';
-      const url = `/api/live/${SCENARIO_ID}/screenshot?t=${Date.now()}`;
-      const tmp = new Image();
-      tmp.onload = () => {
-        img.src = tmp.src;
-        if (spinner) spinner.style.display = 'none';
-      };
-      tmp.onerror = () => { if (spinner) spinner.style.display = 'none'; };
-      tmp.src = url;
+      fetch(`/api/live/${SCENARIO_ID}/screenshot?t=${Date.now()}`)
+        .then(r => {
+          if (!r.ok) throw new Error(`${r.status}`);
+          return r.blob();
+        })
+        .then(blob => {
+          img.src = URL.createObjectURL(blob);
+          if (spinner) spinner.style.display = 'none';
+        })
+        .catch(err => {
+          if (spinner) {
+            spinner.style.display = 'block';
+            spinner.style.color = '#f87171';
+            spinner.innerHTML = err.message === '404'
+              ? '⚠ No live browser — reset and rerun the scenario to use Live Control'
+              : `⚠ Screenshot failed (${err.message}) — retrying…`;
+          }
+        });
     }
 
     // Initial load
+    if (spinner) { spinner.style.display = 'block'; spinner.textContent = 'Connecting to browser…'; }
     _refreshShot();
     _refreshTimer = setInterval(_refreshShot, 2000);
 
