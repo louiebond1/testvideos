@@ -670,7 +670,7 @@ def _dispatch(page: Page, step) -> None:
         return
 
     # Step: "click OK / confirm the proxy" — click the confirm button
-    if "click" in action and any(k in action for k in ("ok", "confirm", "begin proxy", "start proxy")):
+    if "proxy" in action and "click" in action and any(k in action for k in ("ok", "confirm", "begin proxy", "start proxy")):
         for label in ["OK", "Confirm", "Begin Proxy", "Apply"]:
             try:
                 page.get_by_role("button", name=label).first.click(timeout=5_000)
