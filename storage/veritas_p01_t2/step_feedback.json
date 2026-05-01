@@ -1,20 +1,6 @@
 {
-  "RCM-RC-101": {
-    "RCM-RC-101-01": "GOTO: https://hcm-eu10-preview.hr.cloud.sap/sf/start\nWAIT: 4000\nJS: (function(){function f(root){if(!root)return false;const i=root.querySelector('input[placeholder*=\"Search\"],input[placeholder*=\"actions\"],input[placeholder*=\"search\"]');if(i){i.click();i.focus();return true;}for(const el of root.querySelectorAll('*')){if(el.shadowRoot&&f(el.shadowRoot))return true;}return false;}f(document);})()\nWAIT: 1000\nTYPE: Position Org Chart\nWAIT: 3000\nCLICK: Position Org Chart\nWAIT: 5000",
-    "RCM-RC-101-02": "CLICK: Up One Level\nWAIT: 3000",
-    "RCM-RC-101-03": "CLICK_XY: 375, 516\nWAIT: 2500\nCLICK_XY: 700, 337\nWAIT: 3500\nCLICK: Copy Position\nWAIT: 6000",
-    "RCM-RC-101-04": "JS: (function(){const cb=document.querySelector('input[type=\"checkbox\"][aria-checked=\"false\"]');if(cb)cb.click();})()\nWAIT: 1000",
-    "RCM-RC-101-05": "CLICK: OK\nWAIT: 8000"
-  },
-  "LOGIN-102": {
-    "LOGIN-102-01": "GOTO: https://hcm-eu10-preview.hr.cloud.sap/sf/start\nWAIT: 4000\nCLICK_XY: 1224, 25\nWAIT: 2000",
-    "LOGIN-102-02": "CLICK: Proxy Now\nWAIT: 3000",
-    "LOGIN-102-03": "TYPE: {{target_employee_name}}\nWAIT: 3000\nPRESS: ArrowDown\nWAIT: 500\nPRESS: Enter\nWAIT: 2000\nCLICK: OK\nWAIT: 5000",
-    "LOGIN-102-04": "WAIT: 3000"
-  },
   "LOGIN-101": {
-    "LOGIN-101-01": "CLICK_XY: 206, 31\nselect frickin home then a module dropdown will appear underneath slect 'recruiting, dont click search for actions or people",
-    "LOGIN-101-02": "CLICK_XY: 200, 24",
-    "LOGIN-101-03": "CLICK_XY: 228, 636"
+    "LOGIN-101-02": "no just quite literally press it press'recruiting' its not hard just press it when u see the drop down",
+    "LOGIN-101-01": "no still not woking when you load into home page search position org chart and select the top option"
   }
 }
