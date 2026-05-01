@@ -152,16 +152,19 @@ def run_scenario(
                 if run_context:
                     print(f"  [context] {run_context}")
 
-                # Check if user has requested manual control before this step runs
-                _force_fix = None
+                # Run the step first — browser needs at least one step so SF is loaded
+                step_result = _run_step(page, step, str(runs_dir), feedback=step_feedback)
+
+                # AFTER the step, check if user has requested manual control.
+                # By now SF is loaded and the screenshot will be a real page, not blank.
                 if check_pause_fn and check_pause_fn(scenario.scenario_id) and pause_callback:
-                    print(f"  [force-pause] user requested control before {step.step_id}")
+                    print(f"  [force-pause] user requested control after {step.step_id}")
                     try:
                         _live_shot = str(runs_dir / f"{step.step_id}_live.png")
                         page.screenshot(path=_live_shot)
                     except Exception:
-                        _live_shot = ""
-                    _force_fix = pause_callback(
+                        _live_shot = step_result.screenshot_path or ""
+                    pause_callback(
                         scenario_id=scenario.scenario_id,
                         step_id=step.step_id,
                         screenshot_path=_live_shot,
@@ -169,15 +172,6 @@ def run_scenario(
                         error_message="User requested manual control",
                         page=page,
                     )
-
-                if _force_fix and _force_fix.get("skip"):
-                    # User handled this step manually — mark passed, skip auto-run
-                    from models.dataclasses import StepResult as _SR
-                    step_result = _SR(step_id=step.step_id, passed=True, screenshot_path=_live_shot,
-                                     error_message="", duration_s=0.0)
-                else:
-                    step_result = _run_step(page, step, str(runs_dir),
-                                            feedback=_force_fix.get("commands", step_feedback) if _force_fix else step_feedback)
 
                 # Visual verification — confirm the screenshot actually matches the
                 # expected result. Catches "fake passes" where commands ran but
