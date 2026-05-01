@@ -38,6 +38,10 @@ _ACTIVE_RUNS: dict[str, dict] = {}
 _PAUSE_EVENTS: dict[str, threading.Event] = {}
 _PAUSE_FIX: dict[str, dict | None] = {}
 
+# Live control: scenario_id -> live Playwright page (stored while paused)
+_LIVE_PAGES: dict = {}
+_LIVE_LOCK = threading.Lock()
+
 
 def _humanise_error(raw_error: str) -> str:
     """Ask Claude to translate a raw Playwright/Python error into plain English."""
@@ -59,7 +63,7 @@ def _humanise_error(raw_error: str) -> str:
         return raw_error
 
 
-def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id: str, error_message: str = ""):
+def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id: str, error_message: str = "", page=None):
     """Called by runner when a step fails — pauses and waits for human fix."""
     evt = threading.Event()
     _PAUSE_EVENTS[scenario_id] = evt
@@ -73,10 +77,13 @@ def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id
         "error_message": human_error,
         "raw_error": error_message,
     })
+    if page is not None:
+        _LIVE_PAGES[scenario_id] = page
     print(f"  [pause] {scenario_id} paused on {step_id} — waiting up to 10 min for human fix")
     evt.wait(timeout=600)
     fix = _PAUSE_FIX.pop(scenario_id, None)
     _PAUSE_EVENTS.pop(scenario_id, None)
+    _LIVE_PAGES.pop(scenario_id, None)
     _ACTIVE_RUNS[scenario_id]["status"] = "running"
     return fix
 
@@ -589,6 +596,100 @@ async def resume_run(scenario_id: str, request: Request):
                 data.setdefault(scenario_id, {})[paused_step] = commands
                 _save_feedback(data)
 
+    _PAUSE_EVENTS[scenario_id].set()
+    return JSONResponse({"ok": True})
+
+
+# ── Live control endpoints ──────────────────────────────────────────────────────
+
+@app.get("/api/live/{scenario_id}/screenshot")
+def live_screenshot(scenario_id: str):
+    """Return a fresh PNG screenshot of the live browser (while paused)."""
+    from fastapi.responses import Response
+    page = _LIVE_PAGES.get(scenario_id)
+    if page is None:
+        raise HTTPException(404, "No live browser for this scenario")
+    with _LIVE_LOCK:
+        try:
+            png = page.screenshot(type="png")
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+    return Response(content=png, media_type="image/png")
+
+
+@app.post("/api/live/{scenario_id}/click")
+async def live_click(scenario_id: str, request: Request):
+    """Click at browser-space (x, y) on the live page."""
+    page = _LIVE_PAGES.get(scenario_id)
+    if page is None:
+        raise HTTPException(404, "No live browser for this scenario")
+    body = await request.json()
+    x, y = int(body["x"]), int(body["y"])
+    with _LIVE_LOCK:
+        try:
+            page.mouse.click(x, y)
+            page.wait_for_timeout(400)
+            png = page.screenshot(type="png")
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+    from fastapi.responses import Response
+    return Response(content=png, media_type="image/png")
+
+
+@app.post("/api/live/{scenario_id}/type")
+async def live_type(scenario_id: str, request: Request):
+    """Type text into the live page."""
+    page = _LIVE_PAGES.get(scenario_id)
+    if page is None:
+        raise HTTPException(404, "No live browser for this scenario")
+    body = await request.json()
+    text = body.get("text", "")
+    with _LIVE_LOCK:
+        try:
+            page.keyboard.type(text, delay=60)
+            page.wait_for_timeout(300)
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/live/{scenario_id}/key")
+async def live_key(scenario_id: str, request: Request):
+    """Press a key on the live page (Enter, ArrowDown, etc.)."""
+    page = _LIVE_PAGES.get(scenario_id)
+    if page is None:
+        raise HTTPException(404, "No live browser for this scenario")
+    body = await request.json()
+    key = body.get("key", "")
+    with _LIVE_LOCK:
+        try:
+            page.keyboard.press(key)
+            page.wait_for_timeout(300)
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/live/{scenario_id}/done")
+async def live_done(scenario_id: str, request: Request):
+    """User finished live control — save recorded commands and resume runner."""
+    body = await request.json()
+    commands = body.get("commands", "").strip()
+
+    if scenario_id not in _PAUSE_EVENTS:
+        raise HTTPException(400, "No paused run for this scenario")
+
+    # Save as step feedback if we recorded anything
+    if commands:
+        paused_step = _ACTIVE_RUNS.get(scenario_id, {}).get("paused_step")
+        if paused_step:
+            data = _load_feedback()
+            data.setdefault(scenario_id, {})[paused_step] = commands
+            _save_feedback(data)
+            import threading as _t
+            _t.Thread(target=_git_push_feedback, daemon=True).start()
+
+    _PAUSE_FIX[scenario_id] = {"skip": True}
     _PAUSE_EVENTS[scenario_id].set()
     return JSONResponse({"ok": True})
 

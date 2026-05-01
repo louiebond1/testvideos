@@ -179,15 +179,21 @@ def run_scenario(
                         screenshot_path=step_result.screenshot_path,
                         run_id=run_id,
                         error_message=step_result.error_message,
+                        page=page,
                     )
                     if fix:
-                        commands = fix.get("commands", "")
-                        comment = fix.get("comment", "")
-                        print(f"  [resume] got fix: {commands[:80]}")
-                        step_result = _run_step(page, step, str(runs_dir), feedback=commands)
-                        if step_result.passed:
-                            _save_pattern(step.action, commands, comment)
-                            print(f"  [learn] pattern saved for: {step.action[:60]}")
+                        if fix.get("skip"):
+                            # User fixed it manually via live control — mark passed, move on
+                            step_result.passed = True
+                            print(f"  [resume] user took control — step marked passed")
+                        else:
+                            commands = fix.get("commands", "")
+                            comment = fix.get("comment", "")
+                            print(f"  [resume] got fix: {commands[:80]}")
+                            step_result = _run_step(page, step, str(runs_dir), feedback=commands)
+                            if step_result.passed:
+                                _save_pattern(step.action, commands, comment)
+                                print(f"  [learn] pattern saved for: {step.action[:60]}")
 
                 # After a passing step, extract any new IDs / values from the page
                 if step_result.passed and step_produces(step.action):

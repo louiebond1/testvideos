@@ -246,6 +246,10 @@
               style="background:#dc2626;color:#fff;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">
               ✓ Send fix
             </button>
+            <button onclick="window.openLiveControl()"
+              style="background:#16a34a;color:#fff;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">
+              🎮 Take Control
+            </button>
             <button onclick="window.openFixModal()"
               style="background:#1e1b4b;color:#fff;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">
               📸 Circle it
@@ -757,6 +761,196 @@
       }
     }, 3000);
   }
+
+  // ── Live Control ─────────────────────────────────────────────────────────────
+  window.openLiveControl = function() {
+    const state = _currentPauseState;
+    if (!state) return;
+
+    const recorded = [];   // {cmd, label} objects
+    let _refreshTimer = null;
+    let _busy = false;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'live-control-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#0a0a0a;display:flex;flex-direction:column;font-family:system-ui,sans-serif;';
+    overlay.innerHTML = `
+      <div style="background:#111;border-bottom:1px solid #222;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;">
+        <span style="color:#4ade80;font-weight:800;font-size:14px;">🎮 Live Control — ${state.paused_step||''}</span>
+        <span style="color:#6b7280;font-size:12px;flex:1;">Click anywhere on the browser to send clicks. Every action is recorded and saved automatically.</span>
+        <button id="lc-done-btn" onclick="window._lcDone()"
+          style="background:#16a34a;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;">
+          ✓ Done — save &amp; continue
+        </button>
+        <button onclick="window._lcClose()"
+          style="background:transparent;border:1px solid #333;color:#9ca3af;border-radius:6px;padding:7px 12px;font-size:12px;cursor:pointer;">
+          ✕ Cancel
+        </button>
+      </div>
+      <div style="flex:1;display:flex;overflow:hidden;min-height:0;">
+        <!-- Live browser view -->
+        <div style="flex:1;overflow:auto;background:#000;display:flex;align-items:flex-start;justify-content:center;padding:8px;position:relative;cursor:crosshair;" id="lc-img-wrap">
+          <img id="lc-img" style="max-width:100%;max-height:100%;display:block;user-select:none;" draggable="false" />
+          <div id="lc-overlay-dots" style="position:absolute;top:8px;left:50%;transform:translateX(-50%);pointer-events:none;"></div>
+          <div id="lc-spinner" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#fff;font-size:13px;display:none;">Loading…</div>
+        </div>
+        <!-- Recorded commands sidebar -->
+        <div style="width:280px;flex-shrink:0;background:#111;border-left:1px solid #1f1f1f;padding:14px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;">
+          <div>
+            <p style="color:#9ca3af;font-size:11px;margin:0 0 6px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;">Recorded commands</p>
+            <div id="lc-cmd-list" style="display:flex;flex-direction:column;gap:3px;min-height:30px;">
+              <span style="color:#4b5563;font-size:11px;font-style:italic;">Click the browser to start recording…</span>
+            </div>
+          </div>
+          <div style="border-top:1px solid #222;padding-top:10px;">
+            <p style="color:#9ca3af;font-size:11px;margin:0 0 6px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;">Type text</p>
+            <div style="display:flex;gap:4px;">
+              <input id="lc-type-input" type="text" placeholder="Text to type…"
+                style="flex:1;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e5e7eb;padding:6px 8px;font-size:12px;outline:none;"
+                onkeydown="if(event.key==='Enter'){window._lcType();}" />
+              <button onclick="window._lcType()"
+                style="background:#374151;color:#e5e7eb;border:none;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer;">Type</button>
+            </div>
+            <div style="display:flex;gap-4px;margin-top:6px;flex-wrap:wrap;gap:4px;">
+              <button onclick="window._lcKey('Enter')" style="background:#1f2937;color:#9ca3af;border:1px solid #374151;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;">↵ Enter</button>
+              <button onclick="window._lcKey('ArrowDown')" style="background:#1f2937;color:#9ca3af;border:1px solid #374151;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;">↓</button>
+              <button onclick="window._lcKey('ArrowUp')" style="background:#1f2937;color:#9ca3af;border:1px solid #374151;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;">↑</button>
+              <button onclick="window._lcKey('Escape')" style="background:#1f2937;color:#9ca3af;border:1px solid #374151;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;">Esc</button>
+              <button onclick="window._lcKey('Tab')" style="background:#1f2937;color:#9ca3af;border:1px solid #374151;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;">Tab</button>
+            </div>
+          </div>
+          <div style="border-top:1px solid #222;padding-top:10px;">
+            <button onclick="window._lcUndo()" style="width:100%;background:#1f2937;color:#6b7280;border:1px solid #374151;border-radius:6px;padding:5px;font-size:11px;cursor:pointer;">↩ Undo last</button>
+          </div>
+          <p id="lc-status" style="color:#4ade80;font-size:11px;text-align:center;display:none;font-weight:600;"></p>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const img = document.getElementById('lc-img');
+    const wrap = document.getElementById('lc-img-wrap');
+
+    function _recordCmd(cmd, label) {
+      recorded.push({cmd, label});
+      const list = document.getElementById('lc-cmd-list');
+      if (recorded.length === 1) list.innerHTML = '';
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:3px 6px;background:#1a1a1a;border-radius:4px;';
+      row.innerHTML = `<span style="color:#22c55e;font-size:10px;font-family:monospace;flex:1;">${label}</span>`;
+      list.appendChild(row);
+      list.scrollTop = list.scrollHeight;
+    }
+
+    function _refreshShot() {
+      const spinner = document.getElementById('lc-spinner');
+      if (spinner) spinner.style.display = 'block';
+      const url = `/api/live/${SCENARIO_ID}/screenshot?t=${Date.now()}`;
+      const tmp = new Image();
+      tmp.onload = () => {
+        img.src = tmp.src;
+        if (spinner) spinner.style.display = 'none';
+      };
+      tmp.onerror = () => { if (spinner) spinner.style.display = 'none'; };
+      tmp.src = url;
+    }
+
+    // Initial load
+    _refreshShot();
+    _refreshTimer = setInterval(_refreshShot, 2000);
+
+    // Click on browser image
+    wrap.addEventListener('click', async (e) => {
+      if (_busy) return;
+      const r = img.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+      const bx = Math.round((e.clientX - r.left) * (img.naturalWidth / r.width));
+      const by = Math.round((e.clientY - r.top) * (img.naturalHeight / r.height));
+      _busy = true;
+      try {
+        const res = await fetch(`/api/live/${SCENARIO_ID}/click`, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({x: bx, y: by}),
+        });
+        if (res.ok) {
+          const blob = await res.blob();
+          img.src = URL.createObjectURL(blob);
+          _recordCmd(`CLICK_XY: ${bx}, ${by}\nWAIT: 1000`, `CLICK_XY: ${bx}, ${by}`);
+        }
+      } catch(err) {}
+      _busy = false;
+    });
+
+    window._lcType = async function() {
+      const input = document.getElementById('lc-type-input');
+      const text = input.value;
+      if (!text) return;
+      input.value = '';
+      await fetch(`/api/live/${SCENARIO_ID}/type`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({text}),
+      });
+      _recordCmd(`TYPE: ${text}`, `TYPE: ${text}`);
+      setTimeout(_refreshShot, 400);
+    };
+
+    window._lcKey = async function(key) {
+      await fetch(`/api/live/${SCENARIO_ID}/key`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({key}),
+      });
+      _recordCmd(`PRESS: ${key}`, `PRESS: ${key}`);
+      setTimeout(_refreshShot, 400);
+    };
+
+    window._lcUndo = function() {
+      if (!recorded.length) return;
+      recorded.pop();
+      const list = document.getElementById('lc-cmd-list');
+      if (list.lastChild) list.removeChild(list.lastChild);
+      if (!recorded.length) list.innerHTML = '<span style="color:#4b5563;font-size:11px;font-style:italic;">Click the browser to start recording…</span>';
+    };
+
+    window._lcDone = async function() {
+      clearInterval(_refreshTimer);
+      const doneBtn = document.getElementById('lc-done-btn');
+      const statusEl = document.getElementById('lc-status');
+      if (doneBtn) { doneBtn.disabled = true; doneBtn.textContent = 'Saving…'; }
+
+      // Build commands string — each recorded action, with WAITs between clicks
+      const commands = recorded.map(r => r.cmd).join('\n');
+
+      const res = await fetch(`/api/live/${SCENARIO_ID}/done`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({commands}),
+      });
+
+      if (res.ok) {
+        if (statusEl) { statusEl.textContent = 'Saved & resuming…'; statusEl.style.display = 'block'; }
+        document.getElementById('fb-status') && (document.getElementById('fb-status').textContent = 'Live fix saved — resuming run…');
+        document.getElementById('fb-status') && (document.getElementById('fb-status').style.display = 'block');
+        document.getElementById('run-label') && (document.getElementById('run-label').textContent = 'Running…');
+        _hideFailureBar();
+        _startStepPoll();
+        setTimeout(() => {
+          if (document.getElementById('live-control-overlay')) {
+            document.body.removeChild(document.getElementById('live-control-overlay'));
+          }
+        }, 800);
+      } else {
+        if (doneBtn) { doneBtn.disabled = false; doneBtn.textContent = 'Retry'; }
+        if (statusEl) { statusEl.textContent = 'Error — try again'; statusEl.style.display = 'block'; statusEl.style.color = '#ef4444'; }
+      }
+    };
+
+    window._lcClose = function() {
+      clearInterval(_refreshTimer);
+      document.body.removeChild(overlay);
+    };
+  };
 
   // ── Step status buttons ─────────────────────────────────────────────────────
   document.querySelectorAll('[data-step]').forEach(card => {
