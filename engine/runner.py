@@ -57,14 +57,18 @@ def run_scenario(
             print("  [login] logged in successfully")
 
             feedback_data = _load_feedback(scenario.scenario_id)
+            approved_data = _load_approved_commands(scenario.scenario_id)
+            if approved_data:
+                print(f"  [approved] locked playbook loaded — {len(approved_data)} step overrides")
 
             for i, step in enumerate(steps, 1):
                 print(f"\n  [step {i}/{len(steps)}] {step.step_id}")
                 print(f"           {step.action[:120]}")
-                step_feedback = feedback_data.get(step.step_id, "")
+                # Approved commands take priority; fall back to feedback
+                step_feedback = approved_data.get(step.step_id) or feedback_data.get(step.step_id, "")
                 if step_feedback:
-                    print(f"  [feedback] {step_feedback[:120]}")
-                step_result = _run_step(page, step, str(runs_dir), feedback=step_feedback)
+                    print(f"  [{'approved' if step.step_id in approved_data else 'feedback'}] {step_feedback[:120]}")
+                step_result = _run_step(page, step, str(runs_dir), feedback=step_feedback, use_feedback_first=bool(approved_data.get(step.step_id)))
                 result.steps.append(step_result)
 
                 status = "PASS" if step_result.passed else "FAIL"
@@ -105,7 +109,6 @@ def _load_feedback(scenario_id: str) -> dict:
     root = Path(__file__).resolve().parent.parent / "storage"
     client_id = os.getenv("CLIENT_ID", "default")
 
-    # Client-specific feedback
     client_file = root / client_id / "step_feedback.json"
     client_data = {}
     if client_file.exists():
@@ -114,7 +117,6 @@ def _load_feedback(scenario_id: str) -> dict:
         except Exception:
             pass
 
-    # Global feedback (shared across all clients — legacy flat file)
     global_file = root / "step_feedback.json"
     global_data = {}
     if global_file.exists():
@@ -123,7 +125,22 @@ def _load_feedback(scenario_id: str) -> dict:
         except Exception:
             pass
 
-    return {**global_data, **client_data}  # client-specific overrides global
+    return {**global_data, **client_data}
+
+
+def _load_approved_commands(scenario_id: str) -> dict:
+    """Return step_id -> command string for approved (locked) scenarios, or {}."""
+    import json
+    root = Path(__file__).resolve().parent.parent / "storage"
+    client_id = os.getenv("CLIENT_ID", "default")
+    approved_file = root / client_id / "approved.json"
+    if not approved_file.exists():
+        return {}
+    try:
+        data = json.loads(approved_file.read_text())
+        return data.get(scenario_id, {}).get("step_commands", {})
+    except Exception:
+        return {}
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
@@ -150,14 +167,14 @@ def _login(page: Page, url: str, username: str, password: str) -> None:
 
 # ── Step executor ─────────────────────────────────────────────────────────────
 
-def _run_step(page: Page, step, output_dir: str, feedback: str = "") -> StepResult:
+def _run_step(page: Page, step, output_dir: str, feedback: str = "", use_feedback_first: bool = False) -> StepResult:
     t0 = time.time()
 
-    # ── Direct command mode: feedback overrides everything ────────────────────
-    # If feedback contains lines like "CLICK: Recruiting" the runner executes
-    # them literally — no AI, no guessing, guaranteed.
-    if _has_direct_commands(feedback):
-        print(f"  [direct] {step.step_id}: running manual command override")
+    # ── Approved / direct command mode ────────────────────────────────────────
+    # If feedback contains direct commands AND this step is locked (approved)
+    # or explicitly written as commands, execute them immediately on attempt 0.
+    if _has_direct_commands(feedback) and (use_feedback_first or True):
+        print(f"  [direct] {step.step_id}: running command override")
         return _run_direct_commands(page, step, output_dir, feedback, t0)
 
     last_exc = None

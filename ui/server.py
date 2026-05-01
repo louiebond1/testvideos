@@ -37,6 +37,36 @@ _ACTIVE_RUNS: dict[str, dict] = {}
 
 VALID_STATUSES = {"pass", "fail", "blocked", "not_tested"}
 FEEDBACK_FILE = STORAGE_DIR / "step_feedback.json"
+APPROVED_FILE = STORAGE_DIR / "approved.json"
+
+
+def _load_approved() -> dict:
+    if APPROVED_FILE.exists():
+        try:
+            return json.loads(APPROVED_FILE.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_approved(data: dict) -> None:
+    APPROVED_FILE.write_text(json.dumps(data, indent=2))
+
+
+def _git_push_approved():
+    import subprocess
+    try:
+        paths = [
+            str(APPROVED_FILE.relative_to(ROOT)),
+            str(FEEDBACK_FILE.relative_to(ROOT)),
+        ]
+        for p in paths:
+            subprocess.run(["git", "-C", str(ROOT), "add", p], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(ROOT), "commit", "-m", "Update approved playbook [auto]"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(ROOT), "push", "origin", "master"], check=True, capture_output=True)
+        print("[approved] pushed to GitHub")
+    except Exception as exc:
+        print(f"[approved] git push skipped: {exc}")
 
 
 def _load_feedback() -> dict:
@@ -224,6 +254,7 @@ def scenario_detail(request: Request, scenario_id: str):
     step_statuses = {step.step_id: statuses.get(step.step_id, "not_tested") for step in scenario.steps}
 
     feedback = _load_feedback().get(scenario_id, {})
+    approved = _load_approved().get(scenario_id)
 
     return templates.TemplateResponse(
         request=request,
@@ -236,6 +267,7 @@ def scenario_detail(request: Request, scenario_id: str):
             "step_statuses": step_statuses,
             "step_feedback": feedback,
             "step_screenshots": step_screenshots,
+            "approved": approved,
             "client_id": CLIENT_ID,
         },
     )
@@ -292,6 +324,30 @@ def _git_push_feedback():
         print("[feedback] pushed to GitHub — Railway redeploying")
     except Exception as exc:
         print(f"[feedback] git push skipped: {exc}")
+
+
+@app.post("/api/scenario/{scenario_id}/approve")
+def approve_scenario(scenario_id: str):
+    """Lock the current feedback as the golden playbook for this scenario."""
+    feedback = _load_feedback().get(scenario_id, {})
+    approved = _load_approved()
+    approved[scenario_id] = {
+        "approved_at": datetime.utcnow().isoformat(),
+        "step_commands": feedback,
+    }
+    _save_approved(approved)
+    threading.Thread(target=_git_push_approved, daemon=True).start()
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/scenario/{scenario_id}/unapprove")
+def unapprove_scenario(scenario_id: str):
+    """Remove the golden playbook so the scenario goes back to normal mode."""
+    approved = _load_approved()
+    approved.pop(scenario_id, None)
+    _save_approved(approved)
+    threading.Thread(target=_git_push_approved, daemon=True).start()
+    return JSONResponse({"ok": True})
 
 
 @app.post("/api/step-feedback")
