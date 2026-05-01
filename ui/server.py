@@ -729,14 +729,20 @@ def click_trainer(scenario_id: str, step_id: str):
 
 
 @app.post("/api/step-feedback")
-def set_step_feedback(scenario_id: str = Form(...), step_id: str = Form(...), feedback: str = Form(...)):
+def set_step_feedback(
+    scenario_id: str = Form(...),
+    step_id: str = Form(...),
+    feedback: str = Form(...),
+    push: str = Form("true"),   # "false" = save locally only, no git push
+):
     data = _load_feedback()
     if feedback.strip():
         data.setdefault(scenario_id, {})[step_id] = feedback.strip()
     else:
         data.get(scenario_id, {}).pop(step_id, None)
     _save_feedback(data)
-    threading.Thread(target=_git_push_feedback, daemon=True).start()
+    if push.lower() != "false":
+        threading.Thread(target=_git_push_feedback, daemon=True).start()
     return JSONResponse({"ok": True})
 
 

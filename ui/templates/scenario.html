@@ -657,19 +657,20 @@
     }
   }
 
-  async function _saveFeedback() {
+  async function _saveFeedback(push = true) {
     if (!_selectedStep) return false;
     const text = document.getElementById('feedback-text').value;
     const fd = new FormData();
     fd.append('scenario_id', SCENARIO_ID);
     fd.append('step_id', _selectedStep);
     fd.append('feedback', text);
+    fd.append('push', push ? 'true' : 'false');
     const res = await fetch('/api/step-feedback', { method: 'POST', body: fd });
     return res.ok;
   }
 
   async function sendFeedback() {
-    const ok = await _saveFeedback();
+    const ok = await _saveFeedback(true);  // push to GitHub so Railway has it
     if (ok) {
       document.getElementById('send-btn').textContent = 'Saved ✓';
       document.getElementById('send-status').classList.remove('hidden');
@@ -683,7 +684,7 @@
     retryBtn.textContent = 'Saving…';
     statusEl.classList.add('hidden');
 
-    const saved = await _saveFeedback();
+    const saved = await _saveFeedback(false);  // local save only — no git push, no redeploy
     if (!saved) {
       retryBtn.textContent = 'Save failed';
       retryBtn.disabled = false;
