@@ -9,7 +9,7 @@
   "LOGIN-102": {
     "LOGIN-102-01": "GOTO: https://hcm-eu10-preview.hr.cloud.sap/sf/start\nWAIT: 4000\nCLICK_XY: 1224, 25\nWAIT: 2000",
     "LOGIN-102-02": "CLICK: Proxy Now\nWAIT: 3000",
-    "LOGIN-102-03": "TYPE: {{target_employee_name}}\nWAIT: 3000\nPRESS: ArrowDown\nWAIT: 500\nPRESS: Enter\nWAIT: 2000\nCLICK: OK\nWAIT: 5000",
+    "LOGIN-102-03": "TYPE: {{target_employee_name}}\nWAIT: 3000\nPRESS: ArrowDown\nWAIT: 500\nPRESS: Enter\nWAIT: 2000\nCLICK: OK\nWAIT: 10000",
     "LOGIN-102-04": "WAIT: 3000"
   }
 }
