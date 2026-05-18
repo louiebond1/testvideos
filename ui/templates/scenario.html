@@ -1061,8 +1061,8 @@
     overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#0a0a0a;display:flex;flex-direction:column;font-family:system-ui,sans-serif;';
     overlay.innerHTML = `
       <div style="background:#111;border-bottom:1px solid #222;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;">
-        <span style="color:#e2e8f0;font-weight:600;font-size:13px;letter-spacing:0.01em;">${headerTitle}</span>
-        <span style="color:#6b7280;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${stepAction}">${headerSub}</span>
+        <span id="lc-step-title" style="color:#e2e8f0;font-weight:600;font-size:13px;letter-spacing:0.01em;white-space:nowrap;">${headerTitle}</span>
+        <span id="lc-step-action" style="color:#6b7280;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${headerSub}</span>
         <button id="lc-done-btn" onclick="window._lcDone()"
           style="background:${isLiveStep ? '#065f46' : '#1e293b'};color:#fff;border:1px solid ${isLiveStep ? '#047857' : '#334155'};border-radius:4px;padding:7px 16px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">
           ${doneLabel}
@@ -1148,10 +1148,25 @@
         });
     }
 
-    // Initial load
+    // Initial load — retry every second until first screenshot arrives, then slow to 5s
+    let _firstLoadDone = false;
     if (spinner) { spinner.style.display = 'block'; spinner.textContent = 'Connecting to browser…'; }
-    _refreshShot();
-    _refreshTimer = setInterval(_refreshShot, 5000);
+    function _refreshShotFast() {
+      fetch(`/api/live/${SCENARIO_ID}/screenshot?t=${Date.now()}`)
+        .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.blob(); })
+        .then(blob => {
+          img.src = URL.createObjectURL(blob);
+          if (spinner) spinner.style.display = 'none';
+          if (!_firstLoadDone) {
+            _firstLoadDone = true;
+            clearInterval(_refreshTimer);
+            _refreshTimer = setInterval(_refreshShot, 5000);
+          }
+        })
+        .catch(() => {});
+    }
+    _refreshTimer = setInterval(_refreshShotFast, 1000);
+    _refreshShotFast();
 
     // Click on browser image — queue the click, screenshot arrives via next poll
     wrap.addEventListener('click', async (e) => {
@@ -1212,10 +1227,8 @@
     };
 
     window._lcDone = async function() {
-      clearInterval(_refreshTimer);
       const doneBtn = document.getElementById('lc-done-btn');
-      const statusEl = document.getElementById('lc-status');
-      if (doneBtn) { doneBtn.disabled = true; doneBtn.textContent = isLiveStep ? 'Moving to next step…' : 'Saving…'; }
+      if (doneBtn) { doneBtn.disabled = true; doneBtn.textContent = isLiveStep ? 'Saving…' : 'Saving…'; }
 
       const commands = recorded.map(r => r.cmd).join('\n');
 
@@ -1225,44 +1238,69 @@
         body: JSON.stringify({commands}),
       });
 
-      if (res.ok) {
-        if (statusEl) { statusEl.textContent = isLiveStep ? 'Waiting for next step…' : 'Saved & resuming…'; statusEl.style.display = 'block'; }
+      if (!res.ok) {
+        if (doneBtn) { doneBtn.disabled = false; doneBtn.textContent = isLiveStep ? 'Step Done →' : 'Retry'; }
+        return;
+      }
+
+      if (isLiveStep) {
+        // ── STAY OPEN — clear recorded list, update header, wait for next step ──
+        recorded.length = 0;
+        const list = document.getElementById('lc-cmd-list');
+        if (list) list.innerHTML = '<span style="color:#4b5563;font-size:11px;font-style:italic;">Click the browser to start recording…</span>';
+
+        const titleEl = document.getElementById('lc-step-title');
+        const actionEl = document.getElementById('lc-step-action');
+        if (titleEl) titleEl.textContent = 'Step done — waiting for next…';
+        if (actionEl) actionEl.textContent = '';
+        if (doneBtn) { doneBtn.disabled = true; doneBtn.textContent = 'Waiting…'; }
+
+        // Keep refreshing the screenshot so user sees live state between steps
+        // Poll for next step (or completion)
+        const waitNext = setInterval(async () => {
+          try {
+            const d = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
+            if (d.status === 'done') {
+              clearInterval(waitNext);
+              clearInterval(_refreshTimer);
+              if (titleEl) titleEl.textContent = 'All steps complete ✔';
+              if (actionEl) actionEl.textContent = '';
+              if (doneBtn) { doneBtn.disabled = true; doneBtn.textContent = 'Done'; }
+              setTimeout(() => window.location.reload(), 1500);
+            } else if (d.status === 'paused' && d.live_step) {
+              clearInterval(waitNext);
+              _currentPauseState = d;
+              const nextAction = (d.error_message || '').replace(/^Step \d+\/\d+: /, '');
+              if (titleEl) titleEl.textContent = `Step — ${d.paused_step || ''}`;
+              if (actionEl) actionEl.textContent = nextAction;
+              if (doneBtn) { doneBtn.disabled = false; doneBtn.textContent = 'Step Done →'; }
+            } else if (d.status === 'paused' && !d.live_step) {
+              clearInterval(waitNext);
+              clearInterval(_refreshTimer);
+              if (document.getElementById('live-control-overlay')) {
+                document.body.removeChild(document.getElementById('live-control-overlay'));
+              }
+              _showFailureBar(d);
+            } else if (d.status === 'error') {
+              clearInterval(waitNext);
+              clearInterval(_refreshTimer);
+              if (document.getElementById('live-control-overlay')) {
+                document.body.removeChild(document.getElementById('live-control-overlay'));
+              }
+            }
+          } catch(e) {}
+        }, 2000);
+
+      } else {
+        // Normal (non-live) fix flow — close overlay and resume auto-run
+        _startStepPoll();
         document.getElementById('run-label') && (document.getElementById('run-label').textContent = 'Running…');
         _hideFailureBar();
-
-        if (isLiveStep) {
-          // Remove overlay, then wait for the next live_step pause and re-open
+        setTimeout(() => {
           if (document.getElementById('live-control-overlay')) {
             document.body.removeChild(document.getElementById('live-control-overlay'));
           }
-          // Poll for the next live step or done
-          const waitNext = setInterval(async () => {
-            try {
-              const d = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
-              if (d.status === 'done') { clearInterval(waitNext); window.location.reload(); }
-              else if (d.status === 'paused' && d.live_step) {
-                clearInterval(waitNext);
-                _currentPauseState = d;
-                document.getElementById('run-label') && (document.getElementById('run-label').textContent = `Live — ${d.paused_step||''}`);
-                _openLiveStepView(d);
-              }
-              else if (d.status === 'paused' && !d.live_step) {
-                clearInterval(waitNext);
-                _showFailureBar(d);
-              }
-            } catch(e) {}
-          }, 2000);
-        } else {
-          _startStepPoll();
-          setTimeout(() => {
-            if (document.getElementById('live-control-overlay')) {
-              document.body.removeChild(document.getElementById('live-control-overlay'));
-            }
-          }, 800);
-        }
-      } else {
-        if (doneBtn) { doneBtn.disabled = false; doneBtn.textContent = 'Retry'; }
-        if (statusEl) { statusEl.textContent = 'Error — try again'; statusEl.style.display = 'block'; statusEl.style.color = '#ef4444'; }
+        }, 800);
       }
     };
 

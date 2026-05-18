@@ -89,7 +89,8 @@ def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id
     _PAUSE_EVENTS[scenario_id] = evt
     _PAUSE_FIX[scenario_id] = None
     shot_url = f"/runs/{run_id}/{Path(screenshot_path).name}" if screenshot_path else None
-    human_error = _humanise_error(error_message)
+    # Don't humanise live_step messages — they're step descriptions, not errors
+    human_error = error_message if live_step else _humanise_error(error_message)
     _ACTIVE_RUNS[scenario_id].update({
         "status": "paused",
         "paused_step": step_id,
@@ -104,6 +105,15 @@ def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id
         shot_path = RUNS_DIR / f"{scenario_id}_liveshot.png"
         _LIVE_SHOT_PATHS[scenario_id] = shot_path
         _LIVE_QUEUES[scenario_id] = []
+
+        # Seed with the initial screenshot immediately so the UI never gets a 404
+        # on its first request — the live loop will refresh it every 0.8s after that
+        if screenshot_path and Path(screenshot_path).exists():
+            import shutil as _shutil
+            try:
+                _shutil.copy2(screenshot_path, shot_path)
+            except Exception:
+                pass
 
         print(f"  [pause] {scenario_id} paused on {step_id} — live control active")
 
