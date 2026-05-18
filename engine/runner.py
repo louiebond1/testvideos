@@ -13,7 +13,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 from playwright.sync_api import sync_playwright, Page
 
 from models.dataclasses import TestScenario, StepResult, ScenarioResult
-from engine.coach import get_step_guidance, get_vision_commands, save_successful_pattern
+from engine.coach import get_step_guidance, get_vision_commands, verify_step_result, save_successful_pattern
 from engine.context_extractor import extract_from_text, substitute, step_produces
 from engine.visual_verifier import verify_step as _verify_step
 
@@ -398,7 +398,20 @@ def _run_step(page: Page, step, output_dir: str, feedback: str = "", use_feedbac
             print(f"  [vision] {step.step_id}: executing vision commands")
             result = _run_direct_commands(page, step, output_dir, vision_cmds, t0)
             if result.passed:
-                return result
+                # Verify the expected result is actually on screen — catch fake passes
+                post_shot = os.path.join(output_dir, f"{step.step_id}_post.png")
+                try:
+                    page.screenshot(path=post_shot, full_page=False)
+                    if verify_step_result(post_shot, step.expected_result):
+                        return result
+                    else:
+                        print(f"  [vision] commands ran but expected result not achieved — retrying")
+                        result = StepResult(step_id=step.step_id, passed=False,
+                                            error_message="Vision commands completed but expected result not visible on screen",
+                                            duration_s=round(time.time() - t0, 2),
+                                            screenshot_path=post_shot)
+                except Exception:
+                    return result  # screenshot failed — trust the result
             print(f"  [vision] commands failed — falling back to keyword dispatch")
     except Exception as exc:
         print(f"  [vision] pre-shot or call failed: {exc} — falling back")

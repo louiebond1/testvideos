@@ -80,7 +80,16 @@ Current step to execute:
 
 Look at the screenshot carefully. It shows the CURRENT state of the browser right now.
 
-Generate the exact sequence of Playwright commands to complete this step from the current state.
+CRITICAL RULES:
+- You must generate ALL commands needed to FULLY complete this step end-to-end.
+- Do NOT stop halfway. If the step says click a card, then click Actions, then click Copy Position — generate ALL of those commands.
+- The step is only complete when the EXPECTED RESULT is achieved: "{step_expected}"
+- If a popup or panel is open, work through it completely — open menus, click options, confirm dialogs.
+- If a button is visible at a specific pixel location, use CLICK_XY with exact coordinates from the screenshot.
+- Add WAIT: 1500 after any click that opens a menu, dialog, or triggers navigation.
+- Only output WAIT: 500 alone if this step is genuinely observation-only (no UI action whatsoever).
+- Never mark a step done until the expected result would actually be visible on screen.
+
 Available commands (one per line):
   CLICK: visible button or link text
   CLICK_XY: x, y
@@ -89,16 +98,10 @@ Available commands (one per line):
   WAIT: milliseconds
   FILL: field label | value
   SHADOW_CLICK: text in shadow DOM
-  NAVIGATE: Module Name (e.g. Recruiting, Company Info)
+  NAVIGATE: Module Name
   JS: javascript expression
 
-Rules:
-- Look at what is ACTUALLY on screen right now — use what you see, not what you expect.
-- If a popup or panel is open, address elements inside it first.
-- If a button is visible at a specific location, use CLICK_XY with the exact coordinates.
-- Add WAIT: 1000 after any click that opens a menu, popup, or triggers navigation.
-- If this is a pure observation step (no clicking needed), output only: WAIT: 500
-- Output ONLY commands. No explanation, no markdown, no blank lines between commands."""
+Output ONLY commands. No explanation, no markdown, no blank lines between commands."""
 
         msg = client.messages.create(
             model="claude-sonnet-4-6",
@@ -133,6 +136,49 @@ Rules:
     except Exception as exc:
         print(f"  [vision] error: {exc}")
         return None
+
+
+def verify_step_result(screenshot_path: str, step_expected: str) -> bool:
+    """Ask Claude to check if the expected result is actually visible on screen.
+
+    Returns True if the expected result is achieved, False if not.
+    Falls back to True (don't block) if no API key or screenshot missing.
+    """
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if not key:
+        return True
+    shot = Path(screenshot_path)
+    if not shot.exists():
+        return True
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=key)
+        img_data = base64.standard_b64encode(shot.read_bytes()).decode()
+
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=50,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img_data}},
+                    {"type": "text", "text": (
+                        f"Look at this screenshot of SAP SuccessFactors.\n"
+                        f"Expected result: {step_expected}\n\n"
+                        f"Does the screenshot show this expected result has been achieved? "
+                        f"Answer only YES or NO."
+                    )},
+                ],
+            }],
+        )
+        answer = msg.content[0].text.strip().upper()
+        print(f"  [verify] expected='{step_expected[:60]}' → {answer}")
+        return answer.startswith("YES")
+
+    except Exception as exc:
+        print(f"  [verify] error: {exc} — defaulting to pass")
+        return True
 
 
 def get_step_guidance(screenshot_path: str, step_action: str, step_expected: str, feedback: str) -> dict | None:
