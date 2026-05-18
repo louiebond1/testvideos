@@ -485,7 +485,7 @@ def _run_direct_commands(page: Page, step, output_dir: str, feedback: str, t0: f
             current_cmd = f"{cmd}: {arg[:60]}"
 
             if cmd == "CLICK":
-                page.get_by_text(arg, exact=False).first.click(timeout=8_000)
+                _smart_click(page, arg)
             elif cmd == "SHADOW_CLICK":
                 if not _shadow_click(page, arg):
                     raise RuntimeError(f"SHADOW_CLICK: could not find '{arg}' in any shadow root")
