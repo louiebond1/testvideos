@@ -1006,28 +1006,20 @@ def _select_and_action(page: Page, action_text: str) -> None:
     except Exception:
         pass  # may already be selected
 
-    # Wait for the popup panel to fully render — it appears ~1s after the card click
-    page.wait_for_timeout(2000)
-
+    # Wait for the popup's Actions button to actually appear — don't use a fixed sleep
     action_opened = False
+    try:
+        page.wait_for_selector(
+            "button:has-text('Actions'), button:has-text('Action')",
+            timeout=8_000,
+        )
+        page.locator("button:has-text('Actions'), button:has-text('Action')").first.click(timeout=5_000)
+        page.wait_for_timeout(800)
+        action_opened = True
+    except Exception:
+        pass
 
-    # Strategy A: click the "Actions" button inside the popup that appeared
-    # The popup renders a blue "Actions v" dropdown button — target it directly
-    for fn in [
-        lambda: page.get_by_role("button", name=re.compile(r"^actions?$", re.IGNORECASE)).first.click(timeout=5_000),
-        lambda: page.locator("button:has-text('Actions')").first.click(timeout=3_000),
-        lambda: page.locator("button:has-text('Action')").first.click(timeout=3_000),
-        lambda: _shadow_click(page, "Actions", exact=False),
-    ]:
-        try:
-            fn()
-            page.wait_for_timeout(800)
-            action_opened = True
-            break
-        except Exception:
-            pass
-
-    # Strategy B: right-click the card as fallback (different SF versions use context menu)
+    # Fallback: right-click the card (opens a context menu in some SF versions)
     if not action_opened:
         try:
             pos_locator.click(button="right", timeout=5_000)
@@ -1038,8 +1030,8 @@ def _select_and_action(page: Page, action_text: str) -> None:
 
     if not action_opened:
         raise RuntimeError(
-            "Could not open Action menu — the position popup appeared but the Actions button "
-            "was not found. Use Take Control or Circle It to click Actions manually."
+            "Could not open Action menu — clicked the position card but the Actions button "
+            "never appeared. Use Take Control or Circle It to click Actions manually."
         )
 
     # Step 2: click the target menu item
