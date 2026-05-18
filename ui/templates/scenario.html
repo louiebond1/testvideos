@@ -22,7 +22,7 @@
         <svg id="run-icon" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
         <span id="run-label">Run scenario</span>
       </button>
-      <button id="supervised-btn" onclick="startRun(true)" title="Supervised — you confirm each step"
+      <button id="supervised-btn" onclick="startLive()" title="You drive each step — full live browser view"
               class="inline-flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 border-l border-slate-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
         Step-by-step
       </button>
@@ -826,6 +826,60 @@
     }, 3000);
   }
 
+  // ── Live step mode ──────────────────────────────────────────────────────────
+  async function startLive() {
+    const btn = document.getElementById('run-btn');
+    const supBtn = document.getElementById('supervised-btn');
+    const label = document.getElementById('run-label');
+    btn.disabled = true;
+    if (supBtn) supBtn.disabled = true;
+    label.textContent = 'Starting…';
+
+    const answers = await _showQuestionsIfNeeded();
+    answers.live = true;
+
+    label.textContent = 'Logging in…';
+    const res = await fetch(`/api/run/${SCENARIO_ID}`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(answers),
+    });
+    if (!res.ok) { label.textContent = 'Failed to start'; btn.disabled = false; if (supBtn) supBtn.disabled = false; return; }
+    label.textContent = 'Waiting for browser…';
+
+    // Poll until first live_step pause, then open the live view
+    _pollTimer = setInterval(async () => {
+      try {
+        const data = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
+        if (data.status === 'done') { clearInterval(_pollTimer); window.location.reload(); }
+        else if (data.status === 'paused' && data.live_step) {
+          label.textContent = `Live — ${data.paused_step || ''}`;
+          _currentPauseState = data;
+          _openLiveStepView(data);
+        }
+        else if (data.status === 'paused' && !data.live_step) {
+          // Real failure during live run — show failure bar
+          _showFailureBar(data);
+        }
+        else if (data.status === 'error') {
+          clearInterval(_pollTimer);
+          label.textContent = 'Error';
+          btn.disabled = false;
+          if (supBtn) supBtn.disabled = false;
+        }
+      } catch(e) {}
+    }, 2000);
+  }
+
+  // Open the live control overlay in "step-by-step" mode
+  function _openLiveStepView(state) {
+    // Don't open multiple overlays
+    if (document.getElementById('live-control-overlay')) return;
+    // Temporarily set _currentPauseState so openLiveControl can read it
+    _currentPauseState = state;
+    openLiveControl(true);  // pass liveStep=true to adjust the header
+  }
+
   // ── Feedback panel ──────────────────────────────────────────────────────────
   function selectStep(stepId, passed) {
     _selectedStep = stepId;
@@ -983,24 +1037,35 @@
   })();
 
   // ── Live Control ─────────────────────────────────────────────────────────────
-  window.openLiveControl = function() {
+  window.openLiveControl = function(liveStep) {
     const state = _currentPauseState;
     if (!state) return;
 
     const recorded = [];   // {cmd, label} objects
     let _refreshTimer = null;
     let _busy = false;
+    const isLiveStep = !!liveStep || !!state.live_step;
+
+    const stepLabel = state.paused_step || '';
+    const stepAction = (state.error_message || '').replace(/^Step \d+\/\d+: /, '');
+    const headerTitle = isLiveStep
+      ? `Step — ${stepLabel}`
+      : `Live Control — ${stepLabel}`;
+    const headerSub = isLiveStep
+      ? (stepAction || 'Drive the browser below. Click, type, then press Step Done when complete.')
+      : 'Click anywhere on the browser to send clicks. Every action is recorded and saved automatically.';
+    const doneLabel = isLiveStep ? 'Step Done &#x2192;' : 'Save &amp; Continue';
 
     const overlay = document.createElement('div');
     overlay.id = 'live-control-overlay';
     overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#0a0a0a;display:flex;flex-direction:column;font-family:system-ui,sans-serif;';
     overlay.innerHTML = `
       <div style="background:#111;border-bottom:1px solid #222;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;">
-        <span style="color:#e2e8f0;font-weight:600;font-size:13px;letter-spacing:0.01em;">Live Control — ${state.paused_step||''}</span>
-        <span style="color:#6b7280;font-size:12px;flex:1;">Click anywhere on the browser to send clicks. Every action is recorded and saved automatically.</span>
+        <span style="color:#e2e8f0;font-weight:600;font-size:13px;letter-spacing:0.01em;">${headerTitle}</span>
+        <span style="color:#6b7280;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${stepAction}">${headerSub}</span>
         <button id="lc-done-btn" onclick="window._lcDone()"
-          style="background:#1e293b;color:#fff;border:1px solid #334155;border-radius:4px;padding:7px 16px;font-size:12px;font-weight:600;cursor:pointer;">
-          Save &amp; Continue
+          style="background:${isLiveStep ? '#065f46' : '#1e293b'};color:#fff;border:1px solid ${isLiveStep ? '#047857' : '#334155'};border-radius:4px;padding:7px 16px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">
+          ${doneLabel}
         </button>
         <button onclick="window._lcClose()"
           style="background:transparent;border:1px solid #333;color:#9ca3af;border-radius:6px;padding:7px 12px;font-size:12px;cursor:pointer;">
@@ -1086,7 +1151,7 @@
     // Initial load
     if (spinner) { spinner.style.display = 'block'; spinner.textContent = 'Connecting to browser…'; }
     _refreshShot();
-    _refreshTimer = setInterval(_refreshShot, 2000);
+    _refreshTimer = setInterval(_refreshShot, 5000);
 
     // Click on browser image — queue the click, screenshot arrives via next poll
     wrap.addEventListener('click', async (e) => {
@@ -1150,9 +1215,8 @@
       clearInterval(_refreshTimer);
       const doneBtn = document.getElementById('lc-done-btn');
       const statusEl = document.getElementById('lc-status');
-      if (doneBtn) { doneBtn.disabled = true; doneBtn.textContent = 'Saving…'; }
+      if (doneBtn) { doneBtn.disabled = true; doneBtn.textContent = isLiveStep ? 'Moving to next step…' : 'Saving…'; }
 
-      // Build commands string — each recorded action, with WAITs between clicks
       const commands = recorded.map(r => r.cmd).join('\n');
 
       const res = await fetch(`/api/live/${SCENARIO_ID}/done`, {
@@ -1162,17 +1226,40 @@
       });
 
       if (res.ok) {
-        if (statusEl) { statusEl.textContent = 'Saved & resuming…'; statusEl.style.display = 'block'; }
-        document.getElementById('fb-status') && (document.getElementById('fb-status').textContent = 'Live fix saved — resuming run…');
-        document.getElementById('fb-status') && (document.getElementById('fb-status').style.display = 'block');
+        if (statusEl) { statusEl.textContent = isLiveStep ? 'Waiting for next step…' : 'Saved & resuming…'; statusEl.style.display = 'block'; }
         document.getElementById('run-label') && (document.getElementById('run-label').textContent = 'Running…');
         _hideFailureBar();
-        _startStepPoll();
-        setTimeout(() => {
+
+        if (isLiveStep) {
+          // Remove overlay, then wait for the next live_step pause and re-open
           if (document.getElementById('live-control-overlay')) {
             document.body.removeChild(document.getElementById('live-control-overlay'));
           }
-        }, 800);
+          // Poll for the next live step or done
+          const waitNext = setInterval(async () => {
+            try {
+              const d = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
+              if (d.status === 'done') { clearInterval(waitNext); window.location.reload(); }
+              else if (d.status === 'paused' && d.live_step) {
+                clearInterval(waitNext);
+                _currentPauseState = d;
+                document.getElementById('run-label') && (document.getElementById('run-label').textContent = `Live — ${d.paused_step||''}`);
+                _openLiveStepView(d);
+              }
+              else if (d.status === 'paused' && !d.live_step) {
+                clearInterval(waitNext);
+                _showFailureBar(d);
+              }
+            } catch(e) {}
+          }, 2000);
+        } else {
+          _startStepPoll();
+          setTimeout(() => {
+            if (document.getElementById('live-control-overlay')) {
+              document.body.removeChild(document.getElementById('live-control-overlay'));
+            }
+          }, 800);
+        }
       } else {
         if (doneBtn) { doneBtn.disabled = false; doneBtn.textContent = 'Retry'; }
         if (statusEl) { statusEl.textContent = 'Error — try again'; statusEl.style.display = 'block'; statusEl.style.color = '#ef4444'; }

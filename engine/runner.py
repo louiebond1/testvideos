@@ -86,6 +86,7 @@ def run_scenario(
     step_done_callback=None,
     check_pause_fn=None,
     step_confirm_callback=None,
+    live_mode: bool = False,
 ) -> ScenarioResult:
     """Login to SF, run all (or first *max_steps*) steps, record video."""
     run_id = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -166,9 +167,37 @@ def run_scenario(
                         )
                     _scenario_ctx = "\n".join(_ctx_lines)
 
-                # Run the step — vision-first, keyword dispatch as fallback
-                step_result = _run_step(page, step, str(runs_dir), feedback=step_feedback,
-                                        scenario_context=_scenario_ctx)
+                # Live mode: pause BEFORE the step so user drives it manually
+                if live_mode and pause_callback:
+                    pre_shot = str(runs_dir / f"{step.step_id}_pre.png")
+                    try:
+                        page.screenshot(path=pre_shot)
+                    except Exception:
+                        pre_shot = ""
+                    fix = pause_callback(
+                        scenario_id=scenario.scenario_id,
+                        step_id=step.step_id,
+                        screenshot_path=pre_shot,
+                        run_id=run_id,
+                        error_message=f"Step {i}/{len(steps)}: {step.action}",
+                        page=page,
+                        live_step=True,
+                    )
+                    if fix and fix.get("commands"):
+                        _save_pattern(step.action, fix["commands"], "live step")
+                    post_shot = str(runs_dir / f"{step.step_id}.png")
+                    try:
+                        page.screenshot(path=post_shot)
+                    except Exception:
+                        post_shot = pre_shot
+                    step_result = StepResult(
+                        step_id=step.step_id, passed=True,
+                        duration_s=0, screenshot_path=post_shot,
+                    )
+                else:
+                    # Run the step — vision-first, keyword dispatch as fallback
+                    step_result = _run_step(page, step, str(runs_dir), feedback=step_feedback,
+                                            scenario_context=_scenario_ctx)
 
                 # AFTER the step, check if user has requested manual control.
                 # By now SF is loaded and the screenshot will be a real page, not blank.

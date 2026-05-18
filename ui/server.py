@@ -77,7 +77,7 @@ def _humanise_error(raw_error: str) -> str:
         return raw_error
 
 
-def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id: str, error_message: str = "", page=None):
+def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id: str, error_message: str = "", page=None, live_step: bool = False):
     """Called by runner when a step fails — pauses and waits for human fix.
 
     If a live page is provided, runs a screenshot+action loop in the CALLING
@@ -96,6 +96,7 @@ def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id
         "screenshot_url": shot_url,
         "error_message": human_error,
         "raw_error": error_message,
+        "live_step": live_step,
     })
 
     if page is not None:
@@ -469,14 +470,16 @@ async def trigger_run(scenario_id: str, request: Request):
     # Accept optional pre-run answers (e.g. proxy_name, candidate_name) + supervised flag
     try:
         body = await request.json()
-        pre_answers = {k: v for k, v in body.items() if k != "supervised"} if isinstance(body, dict) else {}
+        pre_answers = {k: v for k, v in body.items() if k not in ("supervised", "live")} if isinstance(body, dict) else {}
         supervised = bool(body.get("supervised", False)) if isinstance(body, dict) else False
+        live_mode = bool(body.get("live", False)) if isinstance(body, dict) else False
     except Exception:
         pre_answers = {}
         supervised = False
+        live_mode = False
 
     run_id = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-    _ACTIVE_RUNS[scenario_id] = {"status": "running", "run_id": run_id, "supervised": supervised}
+    _ACTIVE_RUNS[scenario_id] = {"status": "running", "run_id": run_id, "supervised": supervised, "live_mode": live_mode}
 
     # Live step log written to disk so it survives page reload
     step_log_file = RUNS_DIR / f"{scenario_id}_last_run.json"
@@ -516,6 +519,7 @@ async def trigger_run(scenario_id: str, request: Request):
                 step_done_callback=_step_done_callback,
                 check_pause_fn=_check_pause,
                 step_confirm_callback=_step_confirm if supervised else None,
+                live_mode=live_mode,
             )
             _write_step_log(steps_log, "done")
             _ACTIVE_RUNS[scenario_id] = {
