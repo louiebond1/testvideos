@@ -999,34 +999,35 @@ def _select_and_action(page: Page, action_text: str) -> None:
     on the card, or a hover-triggered dropdown, or a toolbar button that appears
     after selection. We try all three in order.
     """
-    # Step 1: click the position card to select it
+    # Step 1: click the position card — this opens a detail popup containing the Actions button
     pos_locator = page.locator("text=/POS\\d+/").first
     try:
         pos_locator.click(timeout=5_000)
-        page.wait_for_timeout(1000)
     except Exception:
         pass  # may already be selected
 
+    # Wait for the popup panel to fully render — it appears ~1s after the card click
+    page.wait_for_timeout(2000)
+
     action_opened = False
 
-    # Strategy A: standard button/role lookup (works if toolbar renders a button)
-    for label in ["Action", "Actions", "Take Action"]:
-        for fn in [
-            lambda l=label: page.get_by_role("button", name=re.compile(l, re.IGNORECASE)).first.click(timeout=3_000),
-            lambda l=label: page.get_by_text(l, exact=True).first.click(timeout=2_000),
-            lambda l=label: _shadow_click(page, l, exact=True),
-        ]:
-            try:
-                fn()
-                page.wait_for_timeout(800)
-                action_opened = True
-                break
-            except Exception:
-                pass
-        if action_opened:
+    # Strategy A: click the "Actions" button inside the popup that appeared
+    # The popup renders a blue "Actions v" dropdown button — target it directly
+    for fn in [
+        lambda: page.get_by_role("button", name=re.compile(r"^actions?$", re.IGNORECASE)).first.click(timeout=5_000),
+        lambda: page.locator("button:has-text('Actions')").first.click(timeout=3_000),
+        lambda: page.locator("button:has-text('Action')").first.click(timeout=3_000),
+        lambda: _shadow_click(page, "Actions", exact=False),
+    ]:
+        try:
+            fn()
+            page.wait_for_timeout(800)
+            action_opened = True
             break
+        except Exception:
+            pass
 
-    # Strategy B: right-click the position card — SF always shows context menu this way
+    # Strategy B: right-click the card as fallback (different SF versions use context menu)
     if not action_opened:
         try:
             pos_locator.click(button="right", timeout=5_000)
@@ -1035,26 +1036,10 @@ def _select_and_action(page: Page, action_text: str) -> None:
         except Exception:
             pass
 
-    # Strategy C: hover to reveal the card's dropdown trigger, then click it
-    if not action_opened:
-        try:
-            pos_locator.hover(timeout=3_000)
-            page.wait_for_timeout(600)
-            for trigger in ["...", "More", "Options", "Action"]:
-                try:
-                    page.get_by_text(trigger, exact=True).first.click(timeout=1_500)
-                    page.wait_for_timeout(600)
-                    action_opened = True
-                    break
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
     if not action_opened:
         raise RuntimeError(
-            "Could not open Action menu — tried toolbar button, right-click, and hover. "
-            "Check the screenshot and use Take Control or Circle It to show where Actions is."
+            "Could not open Action menu — the position popup appeared but the Actions button "
+            "was not found. Use Take Control or Circle It to click Actions manually."
         )
 
     # Step 2: click the target menu item
