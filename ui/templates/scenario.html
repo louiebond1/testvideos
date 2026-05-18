@@ -16,11 +16,17 @@
             class="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-white bg-slate-700 hover:bg-slate-600 rounded border border-slate-600 transition">
       <span id="control-label">Take Control</span>
     </button>
-    <button id="run-btn" onclick="startRun()"
-            class="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-white bg-slate-900 hover:bg-slate-800 rounded border border-slate-900 transition disabled:opacity-50 disabled:cursor-not-allowed">
-      <svg id="run-icon" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-      <span id="run-label">Run scenario</span>
-    </button>
+    <div class="flex items-center border border-slate-900 rounded overflow-hidden">
+      <button id="run-btn" onclick="startRun(false)"
+              class="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-white bg-slate-900 hover:bg-slate-800 transition disabled:opacity-50 disabled:cursor-not-allowed">
+        <svg id="run-icon" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        <span id="run-label">Run scenario</span>
+      </button>
+      <button id="supervised-btn" onclick="startRun(true)" title="Supervised — you confirm each step"
+              class="inline-flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 border-l border-slate-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+        Step-by-step
+      </button>
+    </div>
   </div>
 </header>
 
@@ -356,9 +362,12 @@
   function _setIdle() {
     _ACTIVE_RUNS_STATUS = 'idle';
     document.getElementById('run-btn').disabled = false;
+    const supBtn = document.getElementById('supervised-btn');
+    if (supBtn) supBtn.disabled = false;
     document.getElementById('run-label').textContent = 'Run scenario';
     document.getElementById('cancel-btn').classList.add('hidden');
     _hideFailureBar();
+    _hideConfirmBar();
   }
 
   async function cancelRun() {
@@ -389,31 +398,36 @@
     } catch(e) {}
   })();
 
-  // On load: check for active paused/running run
+  // On load: check for active paused/running/confirming run
   (async function _checkOnLoad() {
     try {
       const data = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
+      _supervisedMode = !!data.supervised;
+
+      function _startPollLoop() {
+        return setInterval(async () => {
+          try {
+            const d = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
+            if (d.status === 'done') { clearInterval(_pollTimer); window.location.reload(); }
+            else if (d.status === 'idle') { clearInterval(_pollTimer); _setIdle(); }
+            else if (d.status === 'paused') { _hideConfirmBar(); _showFailureBar(d); }
+            else if (d.status === 'confirming') { _hideFailureBar(); _showConfirmBar(d.confirming_step, d.screenshot_url); }
+          } catch(e) {}
+        }, 3000);
+      }
+
       if (data.status === 'paused') {
         document.getElementById('live-title').textContent = `Paused — waiting for fix on ${data.paused_step || ''}`;
         _setPaused(data);
-        _pollTimer = setInterval(async () => {
-          try {
-            const d = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
-            if (d.status === 'done') { clearInterval(_pollTimer); window.location.reload(); }
-            else if (d.status === 'idle') { clearInterval(_pollTimer); _setIdle(); }
-            else if (d.status === 'paused') _showFailureBar(d);
-          } catch(e) {}
-        }, 3000);
+        _pollTimer = _startPollLoop();
+      } else if (data.status === 'confirming') {
+        _setRunning();
+        _showConfirmBar(data.confirming_step, data.screenshot_url);
+        document.getElementById('run-label').textContent = `Confirm step ${data.confirming_step || ''}…`;
+        _pollTimer = _startPollLoop();
       } else if (data.status === 'running') {
         _setRunning();
-        _pollTimer = setInterval(async () => {
-          try {
-            const d = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
-            if (d.status === 'done') { clearInterval(_pollTimer); window.location.reload(); }
-            else if (d.status === 'paused') { clearInterval(_pollTimer); _setPaused(d); }
-            else if (d.status === 'idle') { clearInterval(_pollTimer); _setIdle(); }
-          } catch(e) {}
-        }, 3000);
+        _pollTimer = _startPollLoop();
       }
     } catch(e) {}
   })();
@@ -697,36 +711,115 @@
     if (res.ok) window.location.reload();
   }
 
+  // ── Supervised confirmation bar ─────────────────────────────────────────────
+  let _confirmBar = null;
+  let _supervisedMode = false;
+
+  function _ensureConfirmBar() {
+    if (_confirmBar) return _confirmBar;
+    const bar = document.createElement('div');
+    bar.id = 'confirm-bar';
+    bar.style.cssText = [
+      'display:none',
+      'position:fixed',
+      'bottom:0','left:0','right:0',
+      'z-index:9100',
+      'box-shadow:0 -4px 32px rgba(0,0,0,0.4)',
+      'font-family:system-ui,sans-serif',
+    ].join(';');
+    bar.innerHTML = `
+      <div style="background:#0f172a;padding:12px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <span style="width:8px;height:8px;background:#34d399;border-radius:50%;display:inline-block;flex-shrink:0;"></span>
+        <span style="color:#e2e8f0;font-size:13px;font-weight:600;flex:1;">
+          Step complete — <span id="cb-step-id" style="font-family:monospace;color:#94a3b8;"></span>
+          <span style="font-weight:400;color:#64748b;font-size:12px;"> — did it work correctly?</span>
+        </span>
+        <a id="cb-shot-link" href="#" target="_blank"
+           style="font-size:11px;color:#60a5fa;text-decoration:underline;display:none;">View screenshot</a>
+        <button onclick="window._confirmStep(true)"
+          style="background:#059669;color:#fff;border:none;border-radius:4px;padding:8px 20px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">
+          Yes — next step
+        </button>
+        <button onclick="window._confirmStep(false)"
+          style="background:#7f1d1d;color:#fff;border:none;border-radius:4px;padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">
+          No — redo
+        </button>
+      </div>`;
+    document.body.appendChild(bar);
+    _confirmBar = bar;
+    return bar;
+  }
+
+  function _showConfirmBar(stepId, screenshotUrl) {
+    const bar = _ensureConfirmBar();
+    document.getElementById('cb-step-id').textContent = stepId || '';
+    const link = document.getElementById('cb-shot-link');
+    if (screenshotUrl) {
+      link.href = screenshotUrl;
+      link.style.display = 'inline';
+    } else {
+      link.style.display = 'none';
+    }
+    bar.style.display = 'block';
+  }
+
+  function _hideConfirmBar() {
+    if (_confirmBar) _confirmBar.style.display = 'none';
+  }
+
+  window._confirmStep = async function(confirmed) {
+    _hideConfirmBar();
+    document.getElementById('run-label').textContent = confirmed ? 'Running…' : 'Redoing step…';
+    await fetch(`/api/run/${SCENARIO_ID}/confirm-step`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({confirmed}),
+    });
+  };
+
   // ── Run button ──────────────────────────────────────────────────────────────
-  async function startRun() {
+  async function startRun(supervised) {
+    supervised = !!supervised;
+    _supervisedMode = supervised;
     const btn = document.getElementById('run-btn');
+    const supBtn = document.getElementById('supervised-btn');
     const label = document.getElementById('run-label');
     btn.disabled = true;
+    if (supBtn) supBtn.disabled = true;
     label.textContent = 'Checking…';
 
     const answers = await _showQuestionsIfNeeded();
+    if (supervised) answers.supervised = true;
 
-    label.textContent = 'Running…';
+    label.textContent = supervised ? 'Running (supervised)…' : 'Running…';
     const res = await fetch(`/api/run/${SCENARIO_ID}`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify(answers),
     });
-    if (!res.ok) { label.textContent = 'Failed to start'; btn.disabled = false; return; }
+    if (!res.ok) { label.textContent = 'Failed to start'; btn.disabled = false; if (supBtn) supBtn.disabled = false; return; }
     _pollTimer = setInterval(async () => {
       const data = await (await fetch(`/api/run/${SCENARIO_ID}/status`)).json();
       if (data.status === 'done') { clearInterval(_pollTimer); window.location.reload(); }
+      else if (data.status === 'confirming') {
+        _hideFailureBar();
+        label.textContent = `Confirm step ${data.confirming_step || ''}…`;
+        _showConfirmBar(data.confirming_step, data.screenshot_url);
+      }
+      else if (data.status === 'running') {
+        _hideConfirmBar();
+        if (_supervisedMode) label.textContent = 'Running (supervised)…';
+      }
       else if (data.status === 'paused') {
+        _hideConfirmBar();
         label.textContent = 'Waiting for your fix…';
         _showPauseOverlay(data);
-      }
-      else if (data.status === 'running' && _pauseOverlay) {
-        // resumed — overlay already removed by _submitFix
       }
       else if (data.status === 'error') {
         clearInterval(_pollTimer);
         label.textContent = 'Error';
         btn.disabled = false;
+        if (supBtn) supBtn.disabled = false;
         const errBox = document.getElementById('run-error');
         if (errBox) { errBox.textContent = data.error || 'Unknown error'; errBox.classList.remove('hidden'); }
       }

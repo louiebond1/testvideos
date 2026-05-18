@@ -85,6 +85,7 @@ def run_scenario(
     initial_context: dict | None = None,
     step_done_callback=None,
     check_pause_fn=None,
+    step_confirm_callback=None,
 ) -> ScenarioResult:
     """Login to SF, run all (or first *max_steps*) steps, record video."""
     run_id = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -240,6 +241,14 @@ def run_scenario(
                     except Exception:
                         pass
 
+                # Supervised mode: pause after each passing step for human confirmation
+                if step_result.passed and step_confirm_callback:
+                    confirmed = step_confirm_callback(step.step_id, step_result.screenshot_path or "")
+                    if not confirmed:
+                        # User said "redo" — mark failed so pause_callback fires
+                        step_result.passed = False
+                        step_result.error_message = "User requested redo in supervised mode"
+
                 result.steps.append(step_result)
 
                 # Notify caller of step completion (used for live disk log)
@@ -379,7 +388,22 @@ def _run_step(page: Page, step, output_dir: str, feedback: str = "", use_feedbac
     # ── Priority 1: explicit human feedback / approved commands ───────────────
     if _has_direct_commands(feedback):
         print(f"  [direct] {step.step_id}: running command override")
-        return _run_direct_commands(page, step, output_dir, feedback, t0)
+        result = _run_direct_commands(page, step, output_dir, feedback, t0)
+        if result.passed:
+            post_shot = os.path.join(output_dir, f"{step.step_id}_post.png")
+            try:
+                page.screenshot(path=post_shot, full_page=False)
+                if not verify_step_result(post_shot, step.expected_result):
+                    print(f"  [verify] direct commands ran but expected result not on screen — failing step")
+                    return StepResult(
+                        step_id=step.step_id, passed=False,
+                        error_message=f"Commands completed but expected result not visible: {step.expected_result}",
+                        duration_s=round(time.time() - t0, 2),
+                        screenshot_path=post_shot,
+                    )
+            except Exception:
+                pass
+        return result
 
     # ── Priority 2: vision-first — screenshot the real page, ask Claude ──────
     # Claude sees what's actually on screen and generates the exact command

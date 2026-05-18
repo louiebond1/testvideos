@@ -46,6 +46,10 @@ _LIVE_QUEUES: dict[str, list] = {}       # scenario_id -> list of pending action
 # Force-pause: set by UI to pause the runner before the next step
 _FORCE_PAUSE: dict[str, bool] = {}
 
+# Supervised run: pauses after EVERY step for human confirmation
+_CONFIRM_EVENTS: dict[str, threading.Event] = {}
+_CONFIRM_RESULTS: dict[str, bool] = {}  # True = confirmed, False = redo
+
 
 def _humanise_error(raw_error: str) -> str:
     """Ask Claude to translate a raw Playwright/Python error into plain English."""
@@ -138,6 +142,32 @@ def _pause_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id
     _PAUSE_EVENTS.pop(scenario_id, None)
     _ACTIVE_RUNS[scenario_id]["status"] = "running"
     return fix
+
+
+def _confirm_callback(scenario_id: str, step_id: str, screenshot_path: str, run_id: str) -> bool:
+    """Called by runner after each successful step in supervised mode.
+
+    Pauses the run and waits for the user to click 'Step Done'.
+    Returns True if confirmed (move on), False if user wants to redo.
+    """
+    shot_url = f"/runs/{run_id}/{Path(screenshot_path).name}" if screenshot_path else None
+    _ACTIVE_RUNS[scenario_id].update({
+        "status": "confirming",
+        "confirming_step": step_id,
+        "screenshot_url": shot_url,
+    })
+
+    evt = threading.Event()
+    _CONFIRM_EVENTS[scenario_id] = evt
+    _CONFIRM_RESULTS[scenario_id] = True  # default: confirmed
+
+    print(f"  [supervised] waiting for user to confirm step {step_id}")
+    evt.wait(timeout=600)
+
+    confirmed = _CONFIRM_RESULTS.pop(scenario_id, True)
+    _CONFIRM_EVENTS.pop(scenario_id, None)
+    _ACTIVE_RUNS[scenario_id]["status"] = "running"
+    return confirmed
 
 
 VALID_STATUSES = {"pass", "fail", "blocked", "not_tested"}
@@ -436,15 +466,17 @@ async def trigger_run(scenario_id: str, request: Request):
     if _ACTIVE_RUNS.get(scenario_id, {}).get("status") == "running":
         return JSONResponse({"ok": False, "reason": "already running"}, status_code=409)
 
-    # Accept optional pre-run answers (e.g. proxy_name, candidate_name)
+    # Accept optional pre-run answers (e.g. proxy_name, candidate_name) + supervised flag
     try:
         body = await request.json()
-        pre_answers = body if isinstance(body, dict) else {}
+        pre_answers = {k: v for k, v in body.items() if k != "supervised"} if isinstance(body, dict) else {}
+        supervised = bool(body.get("supervised", False)) if isinstance(body, dict) else False
     except Exception:
         pre_answers = {}
+        supervised = False
 
     run_id = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-    _ACTIVE_RUNS[scenario_id] = {"status": "running", "run_id": run_id}
+    _ACTIVE_RUNS[scenario_id] = {"status": "running", "run_id": run_id, "supervised": supervised}
 
     # Live step log written to disk so it survives page reload
     step_log_file = RUNS_DIR / f"{scenario_id}_last_run.json"
@@ -474,11 +506,17 @@ async def trigger_run(scenario_id: str, request: Request):
             def _check_pause(sid):
                 return _FORCE_PAUSE.pop(sid, False)
 
-            result = run_scenario(scenario, runs_root=RUNS_DIR, headless=True,
-                                  pause_callback=lambda **kw: _pause_callback(**kw),
-                                  initial_context=pre_answers,
-                                  step_done_callback=_step_done_callback,
-                                  check_pause_fn=_check_pause)
+            def _step_confirm(step_id, screenshot_path):
+                return _confirm_callback(scenario_id, step_id, screenshot_path, run_id)
+
+            result = run_scenario(
+                scenario, runs_root=RUNS_DIR, headless=True,
+                pause_callback=lambda **kw: _pause_callback(**kw),
+                initial_context=pre_answers,
+                step_done_callback=_step_done_callback,
+                check_pause_fn=_check_pause,
+                step_confirm_callback=_step_confirm if supervised else None,
+            )
             _write_step_log(steps_log, "done")
             _ACTIVE_RUNS[scenario_id] = {
                 "status": "done",
@@ -497,7 +535,7 @@ async def trigger_run(scenario_id: str, request: Request):
             }
 
     threading.Thread(target=_run, daemon=True).start()
-    return JSONResponse({"ok": True, "run_id": run_id, "status": "running"})
+    return JSONResponse({"ok": True, "run_id": run_id, "status": "running", "supervised": supervised})
 
 
 @app.get("/api/run/{scenario_id}/status")
@@ -515,6 +553,24 @@ def run_steps(scenario_id: str):
         except Exception:
             pass
     return JSONResponse({"steps": [], "status": "idle"})
+
+
+@app.post("/api/run/{scenario_id}/confirm-step")
+async def confirm_step(scenario_id: str, request: Request):
+    """Supervised mode: user confirms the current step is done."""
+    try:
+        body = await request.json()
+        confirmed = body.get("confirmed", True)
+    except Exception:
+        confirmed = True
+
+    evt = _CONFIRM_EVENTS.get(scenario_id)
+    if evt is None:
+        return JSONResponse({"ok": False, "reason": "no step awaiting confirmation"}, status_code=400)
+
+    _CONFIRM_RESULTS[scenario_id] = bool(confirmed)
+    evt.set()
+    return JSONResponse({"ok": True, "confirmed": confirmed})
 
 
 EXPECTED_OVERRIDES_FILE = STORAGE_DIR / "expected_overrides.json"
@@ -662,6 +718,10 @@ def cancel_run(scenario_id: str):
     if scenario_id in _PAUSE_EVENTS:
         _PAUSE_FIX[scenario_id] = None
         _PAUSE_EVENTS[scenario_id].set()
+    # Also release any pending supervised confirmation
+    if scenario_id in _CONFIRM_EVENTS:
+        _CONFIRM_RESULTS[scenario_id] = False
+        _CONFIRM_EVENTS[scenario_id].set()
     _ACTIVE_RUNS.pop(scenario_id, None)
     return JSONResponse({"ok": True})
 
