@@ -56,11 +56,17 @@ def _humanise_error(raw_error: str) -> str:
         import anthropic
         client = anthropic.Anthropic(api_key=key)
         msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=120,
+            model="claude-sonnet-4-6",
+            max_tokens=300,
+            system=(
+                "You are an expert in SAP SuccessFactors and automated browser testing. "
+                "Translate technical Playwright/Python errors into clear, plain-English explanations "
+                "that a UAT tester can understand. Be specific about what failed and why."
+            ),
             messages=[{"role": "user", "content":
-                f"Translate this Playwright/Python error into one plain-English sentence that a non-technical person can understand. "
-                f"Say what couldn't be found or what timed out, in simple words. No jargon. No code. Max 25 words.\n\nError: {raw_error[:400]}"}],
+                f"Translate this error into 1-2 plain-English sentences. Say exactly what the automation "
+                f"couldn't find or do, and give a likely reason (e.g. page hadn't loaded, element was hidden, "
+                f"wrong page was open). No jargon, no code.\n\nError: {raw_error[:600]}"}],
         )
         return msg.content[0].text.strip()
     except Exception:
@@ -560,6 +566,29 @@ async def interpret_fix(scenario_id: str, request: Request):
     try:
         import anthropic, base64
         client = anthropic.Anthropic(api_key=key)
+
+        # Load the full scenario so Claude understands what the test is trying to do
+        scenario_context = ""
+        try:
+            scenarios = _load_scenarios()
+            scenario = next((s for s in scenarios if s.scenario_id == scenario_id), None)
+            if scenario:
+                lines = [f"Scenario: {scenario.scenario_id} — {scenario.name}"]
+                lines.append(f"Role: {scenario.role}  |  Module: {scenario.module}")
+                lines.append("")
+                lines.append("Full test steps:")
+                for i, step in enumerate(scenario.steps, 1):
+                    marker = ">>> FAILED HERE <<<" if step.step_id == step_id else ""
+                    lines.append(
+                        f"  {i}. [{step.step_id}] {step.action}"
+                        + (f"\n     Data: {step.test_data}" if step.test_data and step.test_data != "—" else "")
+                        + f"\n     Expected: {step.expected_result}"
+                        + (f"  {marker}" if marker else "")
+                    )
+                scenario_context = "\n".join(lines)
+        except Exception:
+            pass
+
         content: list = []
 
         # Attach screenshot if available
@@ -576,12 +605,15 @@ async def interpret_fix(scenario_id: str, request: Request):
 
         content.append({
             "type": "text",
-            "text": f"""You control a SAP SuccessFactors browser (1280x720) via Playwright.
-A test step failed{f' ({step_id})' if step_id else ''}. The human described how to fix it.
+            "text": f"""You are an expert SAP SuccessFactors automation engineer.
+You control a SuccessFactors browser (1280x720) via Playwright and must fix a failed test step.
 
-Human description: {description}
+{scenario_context}
 
-Generate ONLY the Playwright commands to carry out the fix. Available commands (one per line):
+The step that failed: {step_id}
+The tester's fix description: {description}
+
+Generate ONLY the Playwright commands to carry out this fix. Available commands (one per line):
   GOTO: /sf/start#...
   CLICK: button text or visible label
   CLICK_XY: x, y  (pixel coords on 1280x720)
@@ -590,17 +622,29 @@ Generate ONLY the Playwright commands to carry out the fix. Available commands (
   WAIT: milliseconds
   JS: javascript expression
   FILL: selector | value
+  SHADOW_CLICK: visible label (for elements inside Shadow DOM)
+  NAVIGATE: module name (e.g. Recruiting, Compensation)
 
 Rules:
-- If the human mentions a position like "top right", "bottom left", estimate CLICK_XY coords from the screenshot.
-- If they name a button/link, use CLICK: that name.
+- Use the full scenario context to understand what page should be open and what the step is trying to do.
+- If the screenshot shows a specific UI state, use it to inform exact coordinates.
+- If the tester mentions a position ("top right", "bottom of the popup"), use CLICK_XY with coords estimated from the screenshot.
+- If they name a button or link, use CLICK: that exact label.
+- Add WAIT: 1000 after clicks that open dialogs or trigger navigation.
 - Output ONLY commands, no explanations, no markdown fences.
-- Maximum 5 commands.""",
+- Maximum 8 commands.""",
         })
 
         msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=200,
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            system=(
+                "You are an expert in SAP SuccessFactors Recruiting & Compensation modules and Playwright automation. "
+                "You have deep knowledge of the SuccessFactors UI — its navigation, shadow DOM structure, iframes, "
+                "and common interaction patterns. When given a failed test step and a human description of the fix, "
+                "you generate precise, working Playwright commands. You understand SuccessFactors well enough to "
+                "reason about what is likely on screen even without a screenshot."
+            ),
             messages=[{"role": "user", "content": content}],
         )
         commands = msg.content[0].text.strip()
