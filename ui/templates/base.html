@@ -8,76 +8,76 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
-    .scroll-thin::-webkit-scrollbar { width: 6px; }
-    .scroll-thin::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    .scroll-thin::-webkit-scrollbar { width: 5px; }
+    .scroll-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
   </style>
 </head>
-<body class="bg-gray-50 text-slate-900">
+<body class="bg-slate-100 text-slate-900">
   <div class="flex min-h-screen">
     <!-- Sidebar -->
-    <aside class="w-64 bg-slate-900 text-slate-200 flex-shrink-0 flex flex-col">
-      <div class="px-6 py-6 border-b border-slate-800">
-        <h1 class="text-base font-bold tracking-tight text-white">SUCCESSFACTORS RCM</h1>
-        <p class="text-xs text-slate-400 mt-1">UAT &amp; Test Management</p>
+    <aside class="w-56 bg-[#0f172a] text-slate-300 flex-shrink-0 flex flex-col">
+      <div class="px-5 py-5 border-b border-slate-800">
+        <h1 class="text-sm font-semibold tracking-tight text-white leading-tight">SuccessFactors RCM</h1>
+        <p class="text-[11px] text-slate-500 mt-0.5">Test Operations</p>
         {% if client_id is defined %}
-        <span class="mt-2 inline-block px-2 py-0.5 text-[10px] font-mono font-medium bg-violet-500/20 text-violet-300 border border-violet-500/30 rounded">{{ client_id }}</span>
+        <span class="mt-2 inline-block px-2 py-0.5 text-[10px] font-mono font-medium bg-slate-800 text-slate-400 border border-slate-700 rounded-sm">{{ client_id }}</span>
         {% endif %}
       </div>
 
-      <nav class="flex-1 overflow-y-auto scroll-thin px-3 py-6 space-y-6">
+      <nav class="flex-1 overflow-y-auto scroll-thin px-2 py-5 space-y-5">
         <div>
-          <p class="px-3 text-[11px] font-semibold tracking-wider text-slate-500 uppercase mb-2">Overview</p>
-          <a href="/" class="flex items-center gap-3 px-3 py-2 rounded-md text-sm hover:bg-slate-800 transition">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h6v6H4zM14 6h6v6h-6zM4 16h6v4H4zM14 16h6v4h-6z"/></svg>
+          <p class="px-3 text-[10px] font-semibold tracking-widest text-slate-600 uppercase mb-1">Overview</p>
+          <a href="/" class="flex items-center gap-2.5 px-3 py-2 rounded text-sm hover:bg-slate-800 hover:text-white transition">
+            <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h6v6H4zM14 6h6v6h-6zM4 16h6v4H4zM14 16h6v4h-6z"/></svg>
             Dashboard
           </a>
         </div>
 
         <div>
-          <p class="px-3 text-[11px] font-semibold tracking-wider text-slate-500 uppercase mb-2">Test Scripts</p>
-          <a href="/" class="flex items-center justify-between px-3 py-2 rounded-md text-sm bg-sky-500/10 text-sky-300 border-l-2 border-sky-400">
-            <span class="flex items-center gap-3">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+          <p class="px-3 text-[10px] font-semibold tracking-widest text-slate-600 uppercase mb-1">Test Scripts</p>
+          <a href="/" class="flex items-center justify-between px-3 py-2 rounded text-sm bg-slate-800 text-white border-l-2 border-slate-400">
+            <span class="flex items-center gap-2.5">
+              <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
               All Test Cases
             </span>
-            <span class="text-xs text-slate-400 font-medium">{{ stats.total }}</span>
+            <span class="text-xs text-slate-400 font-medium tabular-nums">{{ stats.total }}</span>
           </a>
-          <a href="/?filter=pass" class="flex items-center justify-between px-3 py-2 rounded-md text-sm hover:bg-slate-800 transition mt-1">
-            <span class="flex items-center gap-3">
-              <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          <a href="/?filter=pass" class="flex items-center justify-between px-3 py-2 rounded text-sm hover:bg-slate-800 hover:text-white transition mt-0.5">
+            <span class="flex items-center gap-2.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0"></span>
               Passing
             </span>
-            <span class="text-xs text-slate-500">{{ stats.passing }}</span>
+            <span class="text-xs text-slate-500 tabular-nums">{{ stats.passing }}</span>
           </a>
-          <a href="/?filter=fail" class="flex items-center justify-between px-3 py-2 rounded-md text-sm hover:bg-slate-800 transition mt-1">
-            <span class="flex items-center gap-3">
-              <span class="w-2 h-2 rounded-full bg-rose-400"></span>
+          <a href="/?filter=fail" class="flex items-center justify-between px-3 py-2 rounded text-sm hover:bg-slate-800 hover:text-white transition mt-0.5">
+            <span class="flex items-center gap-2.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0"></span>
               Failing
             </span>
-            <span class="text-xs text-slate-500">{{ stats.failing }}</span>
+            <span class="text-xs text-slate-500 tabular-nums">{{ stats.failing }}</span>
           </a>
-          <a href="/?filter=blocked" class="flex items-center justify-between px-3 py-2 rounded-md text-sm hover:bg-slate-800 transition mt-1">
-            <span class="flex items-center gap-3">
-              <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+          <a href="/?filter=blocked" class="flex items-center justify-between px-3 py-2 rounded text-sm hover:bg-slate-800 hover:text-white transition mt-0.5">
+            <span class="flex items-center gap-2.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0"></span>
               Blocked
             </span>
-            <span class="text-xs text-slate-500">{{ stats.blocked }}</span>
+            <span class="text-xs text-slate-500 tabular-nums">{{ stats.blocked }}</span>
           </a>
         </div>
 
         <div>
-          <p class="px-3 text-[11px] font-semibold tracking-wider text-slate-500 uppercase mb-2">Tools</p>
-          <a href="#" class="flex items-center gap-3 px-3 py-2 rounded-md text-sm hover:bg-slate-800 transition">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"/></svg>
+          <p class="px-3 text-[10px] font-semibold tracking-widest text-slate-600 uppercase mb-1">Tools</p>
+          <a href="#" class="flex items-center gap-2.5 px-3 py-2 rounded text-sm hover:bg-slate-800 hover:text-white transition">
+            <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"/></svg>
             Test Generator
           </a>
-          <a href="#" class="flex items-center gap-3 px-3 py-2 rounded-md text-sm hover:bg-slate-800 transition mt-1">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+          <a href="#" class="flex items-center gap-2.5 px-3 py-2 rounded text-sm hover:bg-slate-800 hover:text-white transition mt-0.5">
+            <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
             Bug Analyzer
           </a>
-          <a href="#" class="flex items-center gap-3 px-3 py-2 rounded-md text-sm hover:bg-slate-800 transition mt-1">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-            Ask a Question
+          <a href="#" class="flex items-center gap-2.5 px-3 py-2 rounded text-sm hover:bg-slate-800 hover:text-white transition mt-0.5">
+            <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+            Support
           </a>
         </div>
       </nav>

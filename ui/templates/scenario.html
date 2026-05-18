@@ -2,22 +2,22 @@
 {% block title %}{{ scenario.scenario_id }} — EX3 TestOps{% endblock %}
 
 {% block content %}
-<header class="bg-white border-b border-gray-200 px-8 py-5 flex items-center justify-between">
-  <nav class="text-sm text-slate-500 flex items-center gap-2">
-    <a href="/" class="hover:text-slate-700">Test Hub</a>
-    <span class="text-slate-300">›</span>
-    <a href="/" class="hover:text-slate-700">Test Scripts</a>
-    <span class="text-slate-300">›</span>
-    <span class="text-slate-900 font-medium font-mono text-xs">{{ scenario.scenario_id }}</span>
+<header class="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between">
+  <nav class="text-xs text-slate-400 flex items-center gap-1.5">
+    <a href="/" class="hover:text-slate-600">Test Hub</a>
+    <span class="text-slate-300">/</span>
+    <a href="/" class="hover:text-slate-600">Test Scripts</a>
+    <span class="text-slate-300">/</span>
+    <span class="text-slate-700 font-medium font-mono">{{ scenario.scenario_id }}</span>
   </nav>
   <div class="flex items-center gap-3">
     <button id="cancel-btn" onclick="cancelRun()" class="hidden text-xs text-slate-400 hover:text-rose-500 underline transition">Reset</button>
     <button id="control-btn" onclick="takeControlAnytime()"
-            class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition">
-      🎮 <span id="control-label">Take Control</span>
+            class="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-white bg-slate-700 hover:bg-slate-600 rounded border border-slate-600 transition">
+      <span id="control-label">Take Control</span>
     </button>
     <button id="run-btn" onclick="startRun()"
-            class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
+            class="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-white bg-slate-900 hover:bg-slate-800 rounded border border-slate-900 transition disabled:opacity-50 disabled:cursor-not-allowed">
       <svg id="run-icon" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
       <span id="run-label">Run scenario</span>
     </button>
@@ -28,16 +28,16 @@
   <div class="max-w-6xl mx-auto">
 
     <div class="flex items-center gap-3 mb-2">
-      <span class="px-2.5 py-0.5 text-xs font-mono font-medium bg-sky-50 text-sky-700 border border-sky-100 rounded-md">{{ scenario.scenario_id }}</span>
-      <span class="px-2.5 py-0.5 text-xs font-medium bg-{{ role_color }}-50 text-{{ role_color }}-700 border border-{{ role_color }}-200 rounded-full">{{ scenario.role }}</span>
+      <span class="px-2 py-0.5 text-[11px] font-mono font-medium bg-slate-100 text-slate-600 border border-slate-200 rounded">{{ scenario.scenario_id }}</span>
+      <span class="px-2 py-0.5 text-[11px] font-medium bg-{{ role_color }}-50 text-{{ role_color }}-700 border border-{{ role_color }}-200 rounded">{{ scenario.role }}</span>
     </div>
-    <h1 class="text-3xl font-bold tracking-tight">{{ scenario.name }}</h1>
-    <p class="text-slate-500 mt-1 text-sm">{{ scenario.steps|length }} steps · Module {{ scenario.module }}</p>
+    <h1 class="text-lg font-semibold text-slate-900 mt-1">{{ scenario.name }}</h1>
+    <p class="text-slate-500 mt-1 text-xs">{{ scenario.steps|length }} steps &middot; Module {{ scenario.module }}</p>
 
-    <div id="run-error" class="hidden mt-4 p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs font-mono text-rose-700"></div>
+    <div id="run-error" class="hidden mt-4 p-3 bg-red-50 border border-red-200 rounded text-xs font-mono text-red-700"></div>
 
     <!-- ── Live run progress ── -->
-    <div id="live-panel" style="display:none" class="mt-6 bg-white border border-slate-200 rounded-xl p-4">
+    <div id="live-panel" style="display:none" class="mt-6 bg-white border border-slate-200 rounded p-4">
       <h3 class="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
         <span id="live-spinner" style="width:8px;height:8px;border-radius:50%;background:#3b82f6;display:inline-block;animation:lp-pulse 1s infinite;"></span>
         <span id="live-title">Running…</span>
@@ -53,12 +53,12 @@
     <div class="mt-8 grid grid-cols-1 lg:grid-cols-5 gap-6">
 
       <!-- Video -->
-      <div class="lg:col-span-3 bg-white border border-slate-200 rounded-xl p-4">
+      <div class="lg:col-span-3 bg-white border border-slate-200 rounded p-4">
         <div class="flex items-center justify-between mb-3">
           <h3 class="text-sm font-semibold text-slate-700">Latest run</h3>
           <div class="flex items-center gap-2">
             {% if approved %}
-            <span class="px-2 py-0.5 text-xs font-semibold bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-full">Locked ✓</span>
+            <span class="px-2 py-0.5 text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded">Locked</span>
             {% endif %}
             <span class="text-xs text-slate-500 font-mono">{{ run.id }}</span>
           </div>
@@ -79,28 +79,28 @@
         <!-- ── Approve / reject ── -->
         <div class="mt-4 flex gap-2">
           {% if approved %}
-          <span class="flex-1 text-center text-xs text-emerald-600 font-medium py-2 bg-emerald-50 rounded-lg border border-emerald-100">
-            Locked — runner uses this exact approach every time
+          <span class="flex-1 text-center text-xs text-emerald-700 font-medium py-2 bg-emerald-50 rounded border border-emerald-200">
+            Locked — runner uses this approach every time
           </span>
           <button onclick="unapproveRun()"
-                  class="px-4 py-2 text-xs font-semibold text-rose-600 border border-rose-200 hover:bg-rose-50 rounded-lg transition">
-            Mark as wrong
+                  class="px-4 py-2 text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50 rounded transition">
+            Mark as Wrong
           </button>
           {% else %}
           <button onclick="approveRun()"
-                  class="flex-1 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition">
-            ✓ This is correct — lock it in
+                  class="flex-1 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded transition">
+            Mark as Correct
           </button>
           <button onclick="unapproveRun()"
-                  class="px-4 py-2 text-xs font-semibold text-slate-400 border border-slate-200 hover:bg-slate-50 rounded-lg transition">
-            ✗ Wrong
+                  class="px-4 py-2 text-xs font-semibold text-slate-500 border border-slate-200 hover:bg-slate-50 rounded transition">
+            Incorrect
           </button>
           {% endif %}
         </div>
       </div>
 
       <!-- Feedback panel -->
-      <div class="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-4 flex flex-col">
+      <div class="lg:col-span-2 bg-white border border-slate-200 rounded p-4 flex flex-col">
         <h3 class="text-sm font-semibold text-slate-700 mb-1">Run Feedback</h3>
         <p class="text-xs text-slate-400 mb-4">Click a step to give feedback — the runner will use it on the next attempt.</p>
 
@@ -117,7 +117,7 @@
             {% endif %}
             <span class="text-xs font-mono text-slate-700 flex-1">{{ shot.step_id }}</span>
             {% if existing %}
-            <span class="text-[10px] text-violet-500 font-medium">has note</span>
+            <span class="text-[10px] text-slate-400 font-medium">note</span>
             {% endif %}
           </button>
           {% endfor %}
@@ -125,7 +125,7 @@
 
         <!-- Feedback input — shown when a step is selected -->
         <div id="feedback-box" class="hidden mt-4 border-t border-slate-100 pt-4">
-          <p class="text-xs font-medium text-slate-600 mb-2">Feedback for <span id="feedback-step-label" class="font-mono text-violet-600"></span></p>
+          <p class="text-xs font-medium text-slate-600 mb-2">Feedback for <span id="feedback-step-label" class="font-mono text-slate-900 font-semibold"></span></p>
 
           <!-- Click-to-train screenshot -->
           <div id="train-area" class="hidden mb-3">
@@ -139,18 +139,18 @@
 
           <textarea id="feedback-text" rows="3"
                     placeholder="Click the screenshot above to add click points, or type commands:&#10;NAVIGATE: Recruiting&#10;SHADOW_CLICK: Position Org Chart&#10;CLICK_XY: 500, 350&#10;TYPE: Alex Brackley&#10;PRESS: Enter&#10;WAIT: 1000&#10;JS: document.querySelector('input[type=checkbox]').click()"
-                    class="w-full text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-400 transition"></textarea>
+                    class="w-full text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-slate-300 focus:border-slate-400 transition"></textarea>
           <button onclick="saveAndRetry()"
                   id="retry-btn"
-                  class="mt-2 w-full py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
-            Save & Retry now
+                  class="mt-2 w-full py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded transition disabled:opacity-50 disabled:cursor-not-allowed">
+            Save &amp; Retry
           </button>
           <button onclick="sendFeedback()"
                   id="send-btn"
-                  class="mt-1 w-full py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg transition">
-            Save note only
+                  class="mt-1 w-full py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 rounded transition">
+            Save Note Only
           </button>
-          <p id="send-status" class="hidden mt-2 text-xs text-center text-emerald-600 font-medium">✓ Saved</p>
+          <p id="send-status" class="hidden mt-2 text-xs text-center text-slate-600 font-medium">Saved</p>
           <p id="retry-status" class="hidden mt-2 text-xs text-center text-slate-500 font-medium"></p>
         </div>
       </div>
@@ -163,10 +163,10 @@
       {% for step in scenario.steps %}
       {% set status = step_statuses[step.step_id] %}
       <div data-step="{{ step.step_id }}" data-status="{{ status }}"
-           class="bg-white border rounded-xl p-5 transition
-                  {% if status == 'pass' %}border-emerald-200 bg-emerald-50/30
-                  {% elif status == 'fail' %}border-rose-200 bg-rose-50/30
-                  {% elif status == 'blocked' %}border-amber-200 bg-amber-50/30
+           class="bg-white border rounded p-4 transition
+                  {% if status == 'pass' %}border-emerald-200 bg-emerald-50/20
+                  {% elif status == 'fail' %}border-red-200 bg-red-50/20
+                  {% elif status == 'blocked' %}border-amber-200 bg-amber-50/20
                   {% else %}border-slate-200{% endif %}">
         <div class="flex items-start gap-4">
           <span class="mt-1 w-2.5 h-2.5 rounded-full flex-shrink-0
@@ -174,7 +174,7 @@
                        {% elif status == 'fail' %}bg-rose-500
                        {% elif status == 'blocked' %}bg-amber-500
                        {% else %}bg-slate-300{% endif %}"></span>
-          <span class="px-2.5 py-0.5 text-xs font-mono font-medium bg-slate-100 text-slate-700 rounded-md flex-shrink-0">{{ step.step_id }}</span>
+          <span class="px-2 py-0.5 text-[11px] font-mono font-medium bg-slate-100 text-slate-600 border border-slate-200 rounded flex-shrink-0">{{ step.step_id }}</span>
           <div class="flex-1 min-w-0">
             <p class="text-sm text-slate-900">{{ step.action }}</p>
             {% if step.test_data and step.test_data != "—" %}
@@ -182,14 +182,14 @@
             {% endif %}
             <p class="text-xs text-emerald-700 mt-2"><span class="font-medium">Expected:</span> {{ step.expected_result }}</p>
             <div class="mt-4 flex items-center gap-2">
-              <button data-set="pass" class="status-btn px-3 py-1 text-xs font-medium rounded-md border transition
-                {% if status == 'pass' %}bg-emerald-500 text-white border-emerald-500{% else %}bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50{% endif %}">✓ Pass</button>
-              <button data-set="fail" class="status-btn px-3 py-1 text-xs font-medium rounded-md border transition
-                {% if status == 'fail' %}bg-rose-500 text-white border-rose-500{% else %}bg-white text-rose-700 border-rose-200 hover:bg-rose-50{% endif %}">✗ Fail</button>
-              <button data-set="blocked" class="status-btn px-3 py-1 text-xs font-medium rounded-md border transition
-                {% if status == 'blocked' %}bg-amber-500 text-white border-amber-500{% else %}bg-white text-amber-700 border-amber-200 hover:bg-amber-50{% endif %}">◐ Blocked</button>
+              <button data-set="pass" class="status-btn px-3 py-1 text-xs font-medium rounded border transition
+                {% if status == 'pass' %}bg-emerald-600 text-white border-emerald-600{% else %}bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50{% endif %}">Pass</button>
+              <button data-set="fail" class="status-btn px-3 py-1 text-xs font-medium rounded border transition
+                {% if status == 'fail' %}bg-red-600 text-white border-red-600{% else %}bg-white text-red-700 border-red-300 hover:bg-red-50{% endif %}">Fail</button>
+              <button data-set="blocked" class="status-btn px-3 py-1 text-xs font-medium rounded border transition
+                {% if status == 'blocked' %}bg-amber-500 text-white border-amber-500{% else %}bg-white text-amber-700 border-amber-300 hover:bg-amber-50{% endif %}">Blocked</button>
               {% if status != 'not_tested' %}
-              <button data-set="not_tested" class="status-btn ml-2 px-3 py-1 text-xs font-medium rounded-md border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 transition">Reset</button>
+              <button data-set="not_tested" class="status-btn ml-2 px-3 py-1 text-xs font-medium rounded border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 transition">Reset</button>
               {% endif %}
             </div>
           </div>
@@ -227,9 +227,9 @@
       'font-family:system-ui,sans-serif',
     ].join(';');
     bar.innerHTML = `
-      <div id="fb-header" style="background:#b91c1c;padding:12px 20px;display:flex;align-items:center;gap:10px;">
-        <span style="width:10px;height:10px;background:#fff;border-radius:50%;display:inline-block;flex-shrink:0;animation:fb-pulse 1s infinite;"></span>
-        <span style="color:#fff;font-size:15px;font-weight:800;flex:1;">STEP FAILED — <span id="fb-step-id" style="font-family:monospace;font-weight:600;font-size:13px;"></span></span>
+      <div id="fb-header" style="background:#7f1d1d;padding:10px 20px;display:flex;align-items:center;gap:10px;">
+        <span style="width:8px;height:8px;background:#fca5a5;border-radius:50%;display:inline-block;flex-shrink:0;"></span>
+        <span style="color:#fff;font-size:13px;font-weight:700;flex:1;letter-spacing:0.01em;">Step Failed — <span id="fb-step-id" style="font-family:monospace;font-weight:600;font-size:12px;"></span></span>
         <button onclick="document.getElementById('fb-detail').style.display=document.getElementById('fb-detail').style.display==='none'?'block':'none'"
           style="background:rgba(255,255,255,0.2);border:none;color:#fff;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px;margin-right:8px;">Toggle detail</button>
         <button onclick="window._cancelAndHideBar()"
@@ -247,16 +247,16 @@
           </div>
           <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;padding-top:20px;">
             <button onclick="window.sendTextFix()"
-              style="background:#dc2626;color:#fff;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">
-              ✓ Send fix
+              style="background:#991b1b;color:#fff;border:none;border-radius:4px;padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">
+              Send Fix
             </button>
             <button onclick="window.openLiveControl()"
-              style="background:#16a34a;color:#fff;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">
-              🎮 Take Control
+              style="background:#1e293b;color:#fff;border:none;border-radius:4px;padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">
+              Take Control
             </button>
             <button onclick="window.openFixModal()"
-              style="background:#1e1b4b;color:#fff;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">
-              📸 Circle it
+              style="background:#334155;color:#fff;border:none;border-radius:4px;padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">
+              Circle It
             </button>
           </div>
         </div>
@@ -678,10 +678,10 @@
 
     // Highlight selected button
     document.querySelectorAll('[id^="step-btn-"]').forEach(b => {
-      b.classList.remove('bg-violet-50', 'border-violet-200');
+      b.classList.remove('bg-slate-100', 'border-slate-300');
     });
     const btn = document.getElementById(`step-btn-${stepId}`);
-    if (btn) btn.classList.add('bg-violet-50', 'border-violet-200');
+    if (btn) btn.classList.add('bg-slate-100', 'border-slate-300');
 
     // Show feedback box
     const box = document.getElementById('feedback-box');
@@ -842,11 +842,11 @@
     overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#0a0a0a;display:flex;flex-direction:column;font-family:system-ui,sans-serif;';
     overlay.innerHTML = `
       <div style="background:#111;border-bottom:1px solid #222;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;">
-        <span style="color:#4ade80;font-weight:800;font-size:14px;">🎮 Live Control — ${state.paused_step||''}</span>
+        <span style="color:#e2e8f0;font-weight:600;font-size:13px;letter-spacing:0.01em;">Live Control — ${state.paused_step||''}</span>
         <span style="color:#6b7280;font-size:12px;flex:1;">Click anywhere on the browser to send clicks. Every action is recorded and saved automatically.</span>
         <button id="lc-done-btn" onclick="window._lcDone()"
-          style="background:#16a34a;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;">
-          ✓ Done — save &amp; continue
+          style="background:#1e293b;color:#fff;border:1px solid #334155;border-radius:4px;padding:7px 16px;font-size:12px;font-weight:600;cursor:pointer;">
+          Save &amp; Continue
         </button>
         <button onclick="window._lcClose()"
           style="background:transparent;border:1px solid #333;color:#9ca3af;border-radius:6px;padding:7px 12px;font-size:12px;cursor:pointer;">
