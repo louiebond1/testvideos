@@ -169,6 +169,12 @@ def run_scenario(
 
                 # Live mode: pause BEFORE the step so user drives it manually
                 if live_mode and pause_callback:
+                    # Wait for page to fully render before snapshotting
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=8000)
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(1500)
                     pre_shot = str(runs_dir / f"{step.step_id}_pre.png")
                     try:
                         page.screenshot(path=pre_shot)
