@@ -169,12 +169,13 @@ def run_scenario(
 
                 # Live mode: pause BEFORE the step so user drives it manually
                 if live_mode and pause_callback:
-                    # Wait for page to fully render before snapshotting
+                    # Wait for SF to fully paint — networkidle isn't enough,
+                    # the JS framework keeps rendering after network goes quiet
                     try:
-                        page.wait_for_load_state("networkidle", timeout=8000)
+                        page.wait_for_load_state("networkidle", timeout=10000)
                     except Exception:
                         pass
-                    page.wait_for_timeout(1500)
+                    page.wait_for_timeout(4000)
                     pre_shot = str(runs_dir / f"{step.step_id}_pre.png")
                     try:
                         page.screenshot(path=pre_shot)

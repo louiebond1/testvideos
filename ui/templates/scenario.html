@@ -1148,25 +1148,10 @@
         });
     }
 
-    // Initial load — retry every second until first screenshot arrives, then slow to 5s
-    let _firstLoadDone = false;
+    // Refresh every 2 seconds throughout — fast enough to feel live
     if (spinner) { spinner.style.display = 'block'; spinner.textContent = 'Connecting to browser…'; }
-    function _refreshShotFast() {
-      fetch(`/api/live/${SCENARIO_ID}/screenshot?t=${Date.now()}`)
-        .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.blob(); })
-        .then(blob => {
-          img.src = URL.createObjectURL(blob);
-          if (spinner) spinner.style.display = 'none';
-          if (!_firstLoadDone) {
-            _firstLoadDone = true;
-            clearInterval(_refreshTimer);
-            _refreshTimer = setInterval(_refreshShot, 5000);
-          }
-        })
-        .catch(() => {});
-    }
-    _refreshTimer = setInterval(_refreshShotFast, 1000);
-    _refreshShotFast();
+    _refreshShot();
+    _refreshTimer = setInterval(_refreshShot, 2000);
 
     // Click on browser image — queue the click, screenshot arrives via next poll
     wrap.addEventListener('click', async (e) => {
