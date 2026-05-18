@@ -961,28 +961,110 @@ def _nav_destination(action_text: str) -> list[str]:
 # ── Position Org Chart helpers ────────────────────────────────────────────────
 
 def _search_position(page: Page, position_num: str) -> None:
-    """Verify a position is visible on the Org Chart (acts as our parent)."""
-    page.locator("text=/POS\\d+/").first.wait_for(timeout=8_000)
-    # Whatever position is visible serves as the parent — step 3 will click it.
+    """Search for a position in the Org Chart search box, then wait for it to appear."""
+    page.wait_for_load_state("networkidle", timeout=15_000)
+    page.wait_for_timeout(1000)
+
+    # Type the position number into the Search field on the Org Chart toolbar
+    for sel in [
+        "input[placeholder*='search' i]",
+        "input[placeholder*='Search' i]",
+        "[aria-label*='Search' i]",
+        "input[type='text']:visible",
+    ]:
+        try:
+            inp = page.locator(sel).first
+            inp.wait_for(state="visible", timeout=3_000)
+            inp.click()
+            inp.fill(position_num)
+            page.wait_for_timeout(500)
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(2500)
+            break
+        except Exception:
+            pass
+
+    # Wait for the specific position card to appear in the chart
+    try:
+        page.locator(f"text={position_num}").first.wait_for(timeout=8_000)
+    except Exception:
+        # Fallback — accept whatever is on screen
+        page.locator("text=/POS\\d+/").first.wait_for(timeout=5_000)
 
 
 def _select_and_action(page: Page, action_text: str) -> None:
-    """Click on the position card, click Action, then the named menu item."""
-    # Click the position card if visible (POS\d+)
+    """Click on the position card, open the Action menu, then click the target item.
+
+    SF Org Chart has no standalone 'Action' button — the menu opens via right-click
+    on the card, or a hover-triggered dropdown, or a toolbar button that appears
+    after selection. We try all three in order.
+    """
+    # Step 1: click the position card to select it
+    pos_locator = page.locator("text=/POS\\d+/").first
     try:
-        page.locator("text=/POS\\d+/").first.click(timeout=5_000)
-        page.wait_for_timeout(500)
+        pos_locator.click(timeout=5_000)
+        page.wait_for_timeout(1000)
     except Exception:
         pass  # may already be selected
 
-    # Click 'Action' button
-    page.get_by_role("button", name=re.compile("action", re.IGNORECASE)).first.click(
-        timeout=10_000
-    )
-    page.wait_for_timeout(800)
+    action_opened = False
 
-    # Find the menu item to click — look for "Create same level" or "copy position"
-    targets = ["Create same level", "Copy Position", "copy position", "Create Position"]
+    # Strategy A: standard button/role lookup (works if toolbar renders a button)
+    for label in ["Action", "Actions", "Take Action"]:
+        for fn in [
+            lambda l=label: page.get_by_role("button", name=re.compile(l, re.IGNORECASE)).first.click(timeout=3_000),
+            lambda l=label: page.get_by_text(l, exact=True).first.click(timeout=2_000),
+            lambda l=label: _shadow_click(page, l, exact=True),
+        ]:
+            try:
+                fn()
+                page.wait_for_timeout(800)
+                action_opened = True
+                break
+            except Exception:
+                pass
+        if action_opened:
+            break
+
+    # Strategy B: right-click the position card — SF always shows context menu this way
+    if not action_opened:
+        try:
+            pos_locator.click(button="right", timeout=5_000)
+            page.wait_for_timeout(800)
+            action_opened = True
+        except Exception:
+            pass
+
+    # Strategy C: hover to reveal the card's dropdown trigger, then click it
+    if not action_opened:
+        try:
+            pos_locator.hover(timeout=3_000)
+            page.wait_for_timeout(600)
+            for trigger in ["...", "More", "Options", "Action"]:
+                try:
+                    page.get_by_text(trigger, exact=True).first.click(timeout=1_500)
+                    page.wait_for_timeout(600)
+                    action_opened = True
+                    break
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    if not action_opened:
+        raise RuntimeError(
+            "Could not open Action menu — tried toolbar button, right-click, and hover. "
+            "Check the screenshot and use Take Control or Circle It to show where Actions is."
+        )
+
+    # Step 2: click the target menu item
+    targets = [
+        "Create same level Position",
+        "Create same level",
+        "Copy Position",
+        "copy position",
+        "Create Position",
+    ]
     for t in targets:
         try:
             page.get_by_text(t, exact=False).first.click(timeout=4_000)
@@ -990,7 +1072,10 @@ def _select_and_action(page: Page, action_text: str) -> None:
             return
         except Exception:
             continue
-    raise RuntimeError("Could not find 'Create same level / Copy Position' in Action menu")
+    raise RuntimeError(
+        "Action menu opened but 'Create same level / Copy Position' was not found. "
+        "Use Circle It on the screenshot to point to the correct option."
+    )
 
 
 def _fill_position_form(page: Page, data: str) -> None:
