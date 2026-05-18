@@ -645,7 +645,7 @@
   const _trainWrap = document.getElementById('train-img-wrap');
   const _trainDots = document.getElementById('train-dots');
 
-  _trainWrap.addEventListener('click', (e) => {
+  if (_trainWrap) _trainWrap.addEventListener('click', (e) => {
     const rect = _trainImg.getBoundingClientRect();
     const x = Math.round((e.clientX - rect.left) * (1280 / rect.width));
     const y = Math.round((e.clientY - rect.top)  * (720 / rect.height));
@@ -813,7 +813,7 @@
       else if (data.status === 'paused') {
         _hideConfirmBar();
         label.textContent = 'Waiting for your fix…';
-        _showPauseOverlay(data);
+        _showFailureBar(data);
       }
       else if (data.status === 'error') {
         clearInterval(_pollTimer);
