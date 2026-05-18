@@ -13,7 +13,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 from playwright.sync_api import sync_playwright, Page
 
 from models.dataclasses import TestScenario, StepResult, ScenarioResult
-from engine.coach import get_step_guidance, save_successful_pattern
+from engine.coach import get_step_guidance, get_vision_commands, save_successful_pattern
 from engine.context_extractor import extract_from_text, substitute, step_produces
 from engine.visual_verifier import verify_step as _verify_step
 
@@ -130,6 +130,7 @@ def run_scenario(
 
             feedback_data = _load_feedback(scenario.scenario_id)
             expected_overrides = _load_expected_overrides(scenario.scenario_id)
+            _scenario_ctx = ""
 
             for i, step in enumerate(steps, 1):
                 print(f"\n  [step {i}/{len(steps)}] {step.step_id}")
@@ -152,8 +153,21 @@ def run_scenario(
                 if run_context:
                     print(f"  [context] {run_context}")
 
-                # Run the step first — browser needs at least one step so SF is loaded
-                step_result = _run_step(page, step, str(runs_dir), feedback=step_feedback)
+                # Build scenario context string once per run for vision prompts
+                if i == 1:
+                    _ctx_lines = [f"Scenario: {scenario.scenario_id} — {scenario.name}",
+                                  f"Role: {scenario.role}  |  Module: {scenario.module}", "Steps:"]
+                    for _s in steps:
+                        _ctx_lines.append(
+                            f"  [{_s.step_id}] {_s.action}"
+                            + (f" | Data: {_s.test_data}" if _s.test_data and _s.test_data != "—" else "")
+                            + f" | Expected: {_s.expected_result}"
+                        )
+                    _scenario_ctx = "\n".join(_ctx_lines)
+
+                # Run the step — vision-first, keyword dispatch as fallback
+                step_result = _run_step(page, step, str(runs_dir), feedback=step_feedback,
+                                        scenario_context=_scenario_ctx)
 
                 # AFTER the step, check if user has requested manual control.
                 # By now SF is loaded and the screenshot will be a real page, not blank.
@@ -358,16 +372,38 @@ def _login(page: Page, url: str, username: str, password: str) -> None:
 
 # ── Step executor ─────────────────────────────────────────────────────────────
 
-def _run_step(page: Page, step, output_dir: str, feedback: str = "", use_feedback_first: bool = False) -> StepResult:
+def _run_step(page: Page, step, output_dir: str, feedback: str = "", use_feedback_first: bool = False,
+              scenario_context: str = "") -> StepResult:
     t0 = time.time()
 
-    # ── Approved / direct command mode ────────────────────────────────────────
-    # If feedback contains direct commands AND this step is locked (approved)
-    # or explicitly written as commands, execute them immediately on attempt 0.
-    if _has_direct_commands(feedback) and (use_feedback_first or True):
+    # ── Priority 1: explicit human feedback / approved commands ───────────────
+    if _has_direct_commands(feedback):
         print(f"  [direct] {step.step_id}: running command override")
         return _run_direct_commands(page, step, output_dir, feedback, t0)
 
+    # ── Priority 2: vision-first — screenshot the real page, ask Claude ──────
+    # Claude sees what's actually on screen and generates the exact command
+    # sequence rather than guessing from keywords.
+    pre_shot = os.path.join(output_dir, f"{step.step_id}_pre.png")
+    try:
+        page.screenshot(path=pre_shot, full_page=False)
+        vision_cmds = get_vision_commands(
+            pre_shot,
+            step.action,
+            step.expected_result,
+            step.test_data or "",
+            scenario_context,
+        )
+        if vision_cmds:
+            print(f"  [vision] {step.step_id}: executing vision commands")
+            result = _run_direct_commands(page, step, output_dir, vision_cmds, t0)
+            if result.passed:
+                return result
+            print(f"  [vision] commands failed — falling back to keyword dispatch")
+    except Exception as exc:
+        print(f"  [vision] pre-shot or call failed: {exc} — falling back")
+
+    # ── Priority 3: keyword dispatch (legacy fallback) ─────────────────────────
     last_exc = None
     for attempt in range(3):
         try:
@@ -379,8 +415,8 @@ def _run_step(page: Page, step, output_dir: str, feedback: str = "", use_feedbac
                 except Exception:
                     shot_pre = ""
 
-                if feedback and shot_pre:
-                    guidance = get_step_guidance(shot_pre, step.action, step.expected_result, feedback)
+                if shot_pre:
+                    guidance = get_step_guidance(shot_pre, step.action, step.expected_result, feedback or step.action)
                     if guidance:
                         print(f"  [coach] attempt {attempt+1}: {guidance.get('notes','')}")
                         _execute_guidance(page, guidance)
@@ -388,8 +424,6 @@ def _run_step(page: Page, step, output_dir: str, feedback: str = "", use_feedbac
             _dispatch(page, step)
             shot = os.path.join(output_dir, f"{step.step_id}.png")
             page.screenshot(path=shot, full_page=False)
-            if attempt > 0 and feedback:
-                save_successful_pattern(step.action, feedback, {"approach": "coach_guided", "notes": f"succeeded on attempt {attempt+1}"})
             return StepResult(
                 step_id=step.step_id,
                 passed=True,

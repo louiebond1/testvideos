@@ -35,16 +35,111 @@ def save_successful_pattern(step_action: str, feedback: str, guidance: dict) -> 
         f.write(entry)
 
 
-def get_step_guidance(screenshot_path: str, step_action: str, step_expected: str, feedback: str) -> dict | None:
-    """Ask Claude to look at the failure screenshot and return structured guidance.
+def get_vision_commands(
+    screenshot_path: str,
+    step_action: str,
+    step_expected: str,
+    step_data: str = "",
+    scenario_context: str = "",
+) -> str | None:
+    """Primary vision step: look at the screen and return the exact command sequence.
 
-    Returns a dict like:
-      {"approach": "coordinate_click", "x": 145, "y": 320, "wait_before_ms": 500, "notes": "..."}
-      {"approach": "text_click", "text": "Company Info", "exact": false, "notes": "..."}
-      {"approach": "selector_click", "selector": "button.action-btn", "notes": "..."}
-      {"approach": "wait_and_retry", "wait_ms": 2000, "notes": "..."}
-      {"approach": "skip", "notes": "observation step, no action needed"}
-    Returns None if no API key or screenshot unavailable.
+    Called BEFORE keyword dispatch so Claude sees the real page and decides
+    what to do, rather than guessing from text keywords.
+
+    Returns a commands string (CLICK:, CLICK_XY:, TYPE:, WAIT:, etc.) or
+    None if no API key / screenshot missing (falls back to keyword dispatch).
+    """
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if not key:
+        return None
+    shot = Path(screenshot_path)
+    if not shot.exists():
+        return None
+
+    global_notes = _load_global_notes()
+    notes_section = (
+        f"\n\nAccumulated SF navigation knowledge:\n{global_notes}"
+        if global_notes else ""
+    )
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=key)
+        img_data = base64.standard_b64encode(shot.read_bytes()).decode()
+
+        prompt = f"""You are an expert SAP SuccessFactors automation engineer controlling a real browser (1280x720).
+
+{scenario_context}
+
+Current step to execute:
+  Action: {step_action}
+  Test data: {step_data or '—'}
+  Expected result: {step_expected}
+{notes_section}
+
+Look at the screenshot carefully. It shows the CURRENT state of the browser right now.
+
+Generate the exact sequence of Playwright commands to complete this step from the current state.
+Available commands (one per line):
+  CLICK: visible button or link text
+  CLICK_XY: x, y
+  TYPE: text to type
+  PRESS: Key (Enter, ArrowDown, Tab, Escape)
+  WAIT: milliseconds
+  FILL: field label | value
+  SHADOW_CLICK: text in shadow DOM
+  NAVIGATE: Module Name (e.g. Recruiting, Company Info)
+  JS: javascript expression
+
+Rules:
+- Look at what is ACTUALLY on screen right now — use what you see, not what you expect.
+- If a popup or panel is open, address elements inside it first.
+- If a button is visible at a specific location, use CLICK_XY with the exact coordinates.
+- Add WAIT: 1000 after any click that opens a menu, popup, or triggers navigation.
+- If this is a pure observation step (no clicking needed), output only: WAIT: 500
+- Output ONLY commands. No explanation, no markdown, no blank lines between commands."""
+
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=512,
+            system=(
+                "You are an expert in SAP SuccessFactors UI automation. You have deep knowledge of "
+                "SuccessFactors navigation patterns, shadow DOM structure, popup behaviours, and the "
+                "Position Org Chart, Recruiting, and Compensation modules. When shown a screenshot, "
+                "you identify exactly what is on screen and generate precise, working commands."
+            ),
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/png", "data": img_data},
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        )
+
+        raw = msg.content[0].text.strip()
+        # Strip any accidental markdown fences
+        if raw.startswith("```"):
+            raw = "\n".join(raw.split("\n")[1:])
+            if raw.endswith("```"):
+                raw = raw[:-3].strip()
+        print(f"  [vision] commands: {raw[:120]}")
+        return raw if raw else None
+
+    except Exception as exc:
+        print(f"  [vision] error: {exc}")
+        return None
+
+
+def get_step_guidance(screenshot_path: str, step_action: str, step_expected: str, feedback: str) -> dict | None:
+    """Legacy retry coach — used when a step has already failed once.
+
+    Returns a single structured action dict. Kept for backwards compatibility
+    with the retry loop in runner.py.
     """
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
@@ -53,12 +148,11 @@ def get_step_guidance(screenshot_path: str, step_action: str, step_expected: str
         return None
 
     global_notes = _load_global_notes()
-    notes_section = f"\n\nPrevious SF navigation learnings (apply these first):\n{global_notes}" if global_notes else ""
+    notes_section = f"\n\nPrevious SF navigation learnings:\n{global_notes}" if global_notes else ""
 
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=key)
-
         img_data = base64.standard_b64encode(Path(screenshot_path).read_bytes()).decode()
 
         prompt = f"""You are helping an automated Playwright test runner navigate SAP SuccessFactors.
@@ -67,30 +161,27 @@ Step action: {step_action}
 Expected result: {step_expected}
 Human feedback about what went wrong: {feedback}{notes_section}
 
-Look at the screenshot carefully. Decide the best way for Playwright to complete this step.
+Look at the screenshot carefully. Decide the single best next action for Playwright.
 
-Return ONLY valid JSON — no markdown, no explanation outside the JSON:
+Return ONLY valid JSON:
 {{
   "approach": "coordinate_click" | "text_click" | "selector_click" | "wait_and_retry" | "skip",
-  "x": <integer pixel x, only if coordinate_click>,
-  "y": <integer pixel y, only if coordinate_click>,
-  "text": "<visible text to click, only if text_click>",
+  "x": <integer, only if coordinate_click>,
+  "y": <integer, only if coordinate_click>,
+  "text": "<text to click, only if text_click>",
   "exact": <true|false, only if text_click>,
   "selector": "<CSS selector, only if selector_click>",
-  "wait_before_ms": <milliseconds to wait before acting, default 500>,
-  "notes": "<one sentence explaining your reasoning>"
+  "wait_before_ms": <ms to wait before acting, default 500>,
+  "notes": "<one sentence reasoning>"
 }}"""
 
         msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-sonnet-4-6",
             max_tokens=300,
             messages=[{
                 "role": "user",
                 "content": [
-                    {
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": "image/png", "data": img_data},
-                    },
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img_data}},
                     {"type": "text", "text": prompt},
                 ],
             }],
